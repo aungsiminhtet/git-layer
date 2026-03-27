@@ -21,7 +21,11 @@ fn init_repo() -> TempDir {
 
     // Isolate from user's global git config.
     Command::new("git")
-        .args(["config", "core.excludesFile", empty_ignore.to_str().unwrap()])
+        .args([
+            "config",
+            "core.excludesFile",
+            empty_ignore.to_str().unwrap(),
+        ])
         .current_dir(tmp.path())
         .assert()
         .success();
@@ -59,7 +63,8 @@ fn add_normalizes_and_dedupes() {
         .stdout(predicate::str::contains("already layered"))
         .stdout(predicate::str::contains("Layered '.claude/'"));
 
-    let exclude = fs::read_to_string(exclude_path(repo.path())).expect("failed to read exclude file");
+    let exclude =
+        fs::read_to_string(exclude_path(repo.path())).expect("failed to read exclude file");
     assert!(exclude.contains("# managed by layer"));
     assert!(exclude.contains("CLAUDE.md"));
     assert!(exclude.contains(".claude/"));
@@ -155,8 +160,12 @@ fn why_verbose_prints_explanation_block() {
         .args(["why", "CLAUDE.md", "--verbose"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("How git decides to ignore files (checked in order):"))
-        .stdout(predicate::str::contains("A file must not be tracked for any ignore rule to take effect."));
+        .stdout(predicate::str::contains(
+            "How git decides to ignore files (checked in order):",
+        ))
+        .stdout(predicate::str::contains(
+            "A file must not be tracked for any ignore rule to take effect.",
+        ));
 }
 
 // --- ls integration tests ---
@@ -375,7 +384,10 @@ fn rm_dry_run_does_not_modify_file() {
 
     // Verify file was NOT modified
     let content = fs::read_to_string(exclude_path(repo.path())).expect("read");
-    assert!(content.contains("CLAUDE.md"), "entry should still be present after dry run");
+    assert!(
+        content.contains("CLAUDE.md"),
+        "entry should still be present after dry run"
+    );
 }
 
 // --- section-based ownership tests ---
@@ -396,13 +408,28 @@ fn add_preserves_user_entries_in_exclude() {
 
     let content = fs::read_to_string(&exclude).expect("read");
     // User entry preserved in prefix
-    assert!(content.contains("my-notes.txt"), "user entry should be preserved");
-    assert!(content.contains("# my custom excludes"), "user comment should be preserved");
+    assert!(
+        content.contains("my-notes.txt"),
+        "user entry should be preserved"
+    );
+    assert!(
+        content.contains("# my custom excludes"),
+        "user comment should be preserved"
+    );
     // Section markers present
-    assert!(content.contains("# managed by layer"), "start marker should be present");
-    assert!(content.contains("# end layer"), "end marker should be present");
+    assert!(
+        content.contains("# managed by layer"),
+        "start marker should be present"
+    );
+    assert!(
+        content.contains("# end layer"),
+        "end marker should be present"
+    );
     // layer entry added
-    assert!(content.contains("CLAUDE.md"), "layer entry should be present");
+    assert!(
+        content.contains("CLAUDE.md"),
+        "layer entry should be present"
+    );
 }
 
 #[test]
@@ -426,7 +453,10 @@ fn clear_preserves_user_entries() {
 
     // Verify file was NOT modified
     let content = fs::read_to_string(&exclude).expect("read");
-    assert!(content.contains("my-notes.txt"), "user entry should still be present");
+    assert!(
+        content.contains("my-notes.txt"),
+        "user entry should still be present"
+    );
 }
 
 #[test]
@@ -667,7 +697,10 @@ fn off_dry_run_does_not_modify() {
         .stdout(predicate::str::contains("dry run"));
 
     let content = fs::read_to_string(exclude_path(repo.path())).expect("read");
-    assert!(!content.contains("# [off]"), "file should not be modified after dry run");
+    assert!(
+        !content.contains("# [off]"),
+        "file should not be modified after dry run"
+    );
 }
 
 #[test]
@@ -690,7 +723,10 @@ fn on_dry_run_does_not_modify() {
         .stdout(predicate::str::contains("dry run"));
 
     let content = fs::read_to_string(&exclude).expect("read");
-    assert!(content.contains("# [off] CLAUDE.md"), "file should not be modified after dry run");
+    assert!(
+        content.contains("# [off] CLAUDE.md"),
+        "file should not be modified after dry run"
+    );
 }
 
 #[test]
@@ -714,6 +750,73 @@ fn ls_shows_disabled_entries() {
         .stdout(predicate::str::contains("layered"))
         .stdout(predicate::str::contains("Agents.md"))
         .stdout(predicate::str::contains("(disabled)"));
+}
+
+#[test]
+fn status_does_not_show_disabled_entries_as_discovered() {
+    let repo = init_repo();
+    fs::write(repo.path().join("CLAUDE.md"), "notes").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("off")
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 disabled"))
+        .stdout(predicate::str::contains("Discovered").not())
+        .stdout(predicate::str::contains("layer add CLAUDE.md").not());
+}
+
+#[test]
+fn status_off_state_hides_preview_details() {
+    let repo = init_repo();
+    fs::create_dir_all(repo.path().join("docs")).expect("mkdir");
+    fs::write(repo.path().join("docs").join("tracked.md"), "tracked").expect("write");
+    fs::write(repo.path().join("CLAUDE.md"), "notes").expect("write");
+
+    Command::new("git")
+        .args(["add", "docs/tracked.md"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md", "docs/"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("off")
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Layering is off"))
+        .stdout(predicate::str::contains("Disabled (2):"))
+        .stdout(predicate::str::contains("CLAUDE.md"))
+        .stdout(predicate::str::contains("docs/"))
+        .stdout(predicate::str::contains("Preview after layer on:").not())
+        .stdout(predicate::str::contains("Exposed (1):").not())
+        .stdout(predicate::str::contains("git rm --cached docs/tracked.md").not())
+        .stdout(predicate::str::contains("All clear").not());
 }
 
 #[test]
@@ -764,6 +867,9 @@ fn add_dry_run_does_not_write() {
     let exclude = exclude_path(repo.path());
     if exclude.exists() {
         let content = fs::read_to_string(&exclude).expect("read");
-        assert!(!content.contains("CLAUDE.md"), "entry should not be present after dry run");
+        assert!(
+            !content.contains("CLAUDE.md"),
+            "entry should not be present after dry run"
+        );
     }
 }

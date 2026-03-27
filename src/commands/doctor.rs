@@ -43,11 +43,7 @@ pub fn run() -> Result<i32> {
         match diagnosis.kind {
             DiagnosisKind::Layered => {
                 n_layered += 1;
-                println!(
-                    "  {} {} — layered",
-                    ui::layered(),
-                    entry.value
-                );
+                println!("  {} {} — layered", ui::layered(), entry.value);
             }
             DiagnosisKind::Exposed => {
                 n_exposed += 1;
@@ -69,10 +65,7 @@ pub fn run() -> Result<i32> {
                     entry.value,
                     ui::err_text("stale — file not found")
                 );
-                println!(
-                    "    {}",
-                    ui::dim_text(&format!("layer rm {}", entry.value))
-                );
+                println!("    {}", ui::dim_text(&format!("layer rm {}", entry.value)));
             }
             DiagnosisKind::Redundant => {
                 n_redundant += 1;
@@ -82,10 +75,7 @@ pub fn run() -> Result<i32> {
                     entry.value,
                     ui::dim_text("redundant — already in .gitignore")
                 );
-                println!(
-                    "    {}",
-                    ui::dim_text(&format!("layer rm {}", entry.value))
-                );
+                println!("    {}", ui::dim_text(&format!("layer rm {}", entry.value)));
             }
         }
     }

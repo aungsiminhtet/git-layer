@@ -10,7 +10,11 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(name = "layer")]
-#[command(author, version, about = "layer — Context layers for git & agentic coding workflows. A fast CLI to manage local-only context files using Git's .git/info/exclude.")]
+#[command(
+    author,
+    version,
+    about = "layer — Context layers for git & agentic coding workflows. A fast CLI to manage local-only context files using Git's .git/info/exclude."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -172,7 +176,9 @@ fn dispatch(cli: Cli) -> Result<i32> {
         Some(Commands::Rm(args)) => commands::rm::run(args.files, args.dry_run),
         Some(Commands::Ls) => commands::ls::run(),
         Some(Commands::Scan) => commands::scan::run(),
-        Some(Commands::Patterns(args)) => commands::patterns::run(args.json, args.matched, args.show_files),
+        Some(Commands::Patterns(args)) => {
+            commands::patterns::run(args.json, args.matched, args.show_files)
+        }
         Some(Commands::Doctor) => commands::doctor::run(),
         Some(Commands::Clean(args)) => commands::clean::run(args.dry_run, args.all),
         Some(Commands::Clear(args)) => commands::clear::run(args.dry_run),
@@ -200,8 +206,7 @@ fn main() {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => match e.kind() {
-            clap::error::ErrorKind::DisplayHelp
-            | clap::error::ErrorKind::DisplayVersion => {
+            clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
                 println!();
                 let _ = e.print();
                 println!();

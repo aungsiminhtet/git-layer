@@ -23,7 +23,7 @@ pub struct AiDiscovery {
 pub fn run() -> Result<i32> {
     let ctx = git::ensure_repo()?;
     let mut exclude = ensure_exclude_file_for_write(&ctx.exclude_path)?;
-    let excluded = exclude.entry_set();
+    let excluded = exclude.managed_entry_set();
 
     println!("{}", ui::heading("Scanning for context files..."));
     let found = discover_known_files(&ctx, &excluded)?;
@@ -54,7 +54,11 @@ pub fn run() -> Result<i32> {
     let mut has_section = false;
 
     if !tracked.is_empty() {
-        println!("  {} Exposed ({}) — tracked files can't be hidden by layering:", ui::exposed(), tracked.len());
+        println!(
+            "  {} Exposed ({}) — tracked files can't be hidden by layering:",
+            ui::exposed(),
+            tracked.len()
+        );
         for item in &tracked {
             println!("    {} {} ({})", ui::exposed(), item.path, item.label);
             println!(
@@ -69,7 +73,9 @@ pub fn run() -> Result<i32> {
     }
 
     if !already_excluded.is_empty() {
-        if has_section { println!(); }
+        if has_section {
+            println!();
+        }
         println!("  {} Already layered:", ui::layered());
         for item in &already_excluded {
             println!("    {} {}", ui::layered(), ui::dim_text(&item.path));
@@ -78,7 +84,9 @@ pub fn run() -> Result<i32> {
     }
 
     if !already_gitignored.is_empty() {
-        if has_section { println!(); }
+        if has_section {
+            println!();
+        }
         println!("  {} Already ignored by Git:", ui::info());
         for item in &already_gitignored {
             println!("    {} {}", ui::info(), ui::dim_text(&item.path));
@@ -106,7 +114,13 @@ pub fn run() -> Result<i32> {
     // Interactive: multiselect IS the discovery UI
     let items: Vec<String> = selectable
         .iter()
-        .map(|item| format!("{} {}", item.path, ui::dim_text(&format!("({})", item.label))))
+        .map(|item| {
+            format!(
+                "{} {}",
+                item.path,
+                ui::dim_text(&format!("({})", item.label))
+            )
+        })
         .collect();
     let defaults = vec![true; items.len()];
 
@@ -114,7 +128,11 @@ pub fn run() -> Result<i32> {
         "  {} Discovered {} context {} — select for your local layer",
         ui::discovered(),
         selectable.len(),
-        if selectable.len() == 1 { "file" } else { "files" }
+        if selectable.len() == 1 {
+            "file"
+        } else {
+            "files"
+        }
     );
     let theme = ui::layer_theme();
     ui::print_select_hint();
@@ -126,7 +144,10 @@ pub fn run() -> Result<i32> {
 
     let selected = selections.unwrap_or_default();
     if selected.is_empty() {
-        println!("No files selected. You can add files later with {}.", ui::brand("layer add"));
+        println!(
+            "No files selected. You can add files later with {}.",
+            ui::brand("layer add")
+        );
         return Ok(2);
     }
 
@@ -143,7 +164,10 @@ pub fn run() -> Result<i32> {
     Ok(0)
 }
 
-pub fn discover_known_files(ctx: &RepoContext, excluded: &HashSet<String>) -> Result<Vec<AiDiscovery>> {
+pub fn discover_known_files(
+    ctx: &RepoContext,
+    excluded: &HashSet<String>,
+) -> Result<Vec<AiDiscovery>> {
     let tracked = git::list_tracked(&ctx.root)?;
     discover_known_files_with_tracked(ctx, excluded, &tracked)
 }
@@ -241,7 +265,10 @@ pub fn discover_known_files_with_tracked(
         }
 
         let file_ignore_results = git::check_ignore_bulk(&ctx.root, &files_in_dir, false)?;
-        if files_in_dir.iter().all(|f| file_ignore_results.contains_key(f)) {
+        if files_in_dir
+            .iter()
+            .all(|f| file_ignore_results.contains_key(f))
+        {
             out[idx].is_gitignored = true;
         }
     }
@@ -326,7 +353,10 @@ fn pattern_matches_path(pattern: &str, item: &DiscoveredPath) -> bool {
         if pattern.contains('/') {
             return wildcard_match(pattern_trimmed, &item.match_path);
         }
-        return wildcard_match(pattern_trimmed, item.match_path.rsplit('/').next().unwrap_or(""));
+        return wildcard_match(
+            pattern_trimmed,
+            item.match_path.rsplit('/').next().unwrap_or(""),
+        );
     }
 
     if pattern.contains('/') {

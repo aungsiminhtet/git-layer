@@ -26,10 +26,7 @@ pub fn backup() -> Result<i32> {
     let existed = backup_path.exists();
 
     let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
-    let source = identity
-        .source
-        .as_deref()
-        .unwrap_or("(no origin remote)");
+    let source = identity.source.as_deref().unwrap_or("(no origin remote)");
 
     let mut out = String::new();
     out.push_str("# layer backup\n");
@@ -105,7 +102,7 @@ pub fn restore(list: bool) -> Result<i32> {
     }
 
     let mut exclude = ensure_exclude_file_for_write(&ctx.exclude_path)?;
-    let mut current = exclude.entry_set();
+    let mut current = exclude.managed_entry_set();
     let mut added = 0usize;
 
     for entry in backup.entries {
@@ -232,8 +229,8 @@ struct ParsedBackup {
 }
 
 fn parse_backup_file(path: &Path) -> Result<ParsedBackup> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let content =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
 
     let mut repo = path
         .file_stem()
@@ -260,7 +257,11 @@ fn parse_backup_file(path: &Path) -> Result<ParsedBackup> {
         entries.push(trimmed.to_string());
     }
 
-    Ok(ParsedBackup { repo, date, entries })
+    Ok(ParsedBackup {
+        repo,
+        date,
+        entries,
+    })
 }
 
 fn format_backup_date(raw: &Option<String>) -> String {

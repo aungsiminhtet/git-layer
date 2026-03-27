@@ -42,7 +42,11 @@ fn run_static() -> Result<i32> {
             println!("{}", ui::heading(pat.label));
             current_label = pat.label;
         }
-        println!("  {}  {}", pat.entry, ui::dim_text(&format!("({})", detection_kind(pat.entry))));
+        println!(
+            "  {}  {}",
+            pat.entry,
+            ui::dim_text(&format!("({})", detection_kind(pat.entry)))
+        );
     }
 
     Ok(0)
@@ -85,7 +89,7 @@ fn run_json_static() -> Result<i32> {
 fn run_matched(json: bool, show_files: bool) -> Result<i32> {
     let ctx = git::ensure_repo()?;
     let exclude = ensure_exclude_file(&ctx.exclude_path)?;
-    let excluded = exclude.entry_set();
+    let excluded = exclude.managed_entry_set();
 
     let discoveries = scan::discover_known_files(&ctx, &excluded)?;
 
@@ -145,7 +149,10 @@ fn run_matched(json: bool, show_files: bool) -> Result<i32> {
             "  {}  {} {}",
             pat.entry,
             ui::dim_text(&format!("({})", detection_kind(pat.entry))),
-            ui::dim_text(&format!("[{count} match{}]", if count == 1 { "" } else { "es" }))
+            ui::dim_text(&format!(
+                "[{count} match{}]",
+                if count == 1 { "" } else { "es" }
+            ))
         );
 
         if show_files {
@@ -200,7 +207,10 @@ fn print_matched_json(
         json.push_str("    \"patterns\": [\n");
 
         let mut pi_count = 0;
-        let total_matched = patterns.iter().filter(|e| matched_list.iter().any(|m| m.entry == **e)).count();
+        let total_matched = patterns
+            .iter()
+            .filter(|e| matched_list.iter().any(|m| m.entry == **e))
+            .count();
 
         for entry in patterns {
             let mp = matched_list.iter().find(|m| m.entry == *entry);
@@ -321,7 +331,10 @@ mod tests {
     #[test]
     fn pattern_covers_discovery_dir() {
         assert!(pattern_covers_discovery(".claude/", ".claude/"));
-        assert!(pattern_covers_discovery(".claude/", ".claude/settings.json"));
+        assert!(pattern_covers_discovery(
+            ".claude/",
+            ".claude/settings.json"
+        ));
         assert!(!pattern_covers_discovery(".claude/", ".cursorrules"));
     }
 

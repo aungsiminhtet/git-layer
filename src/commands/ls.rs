@@ -131,9 +131,7 @@ fn classify_literal(repo_root: &Path, entry: &str, tracked: &HashSet<String>) ->
     let is_tracked = tracked.contains(entry);
 
     if is_tracked {
-        return EntryStatus::Exposed(format!(
-            "exposed — git rm --cached {entry}"
-        ));
+        return EntryStatus::Exposed(format!("exposed — git rm --cached {entry}"));
     }
 
     if exists {

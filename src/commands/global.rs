@@ -9,7 +9,9 @@ use std::process::Command;
 
 pub fn add(files: Vec<String>) -> Result<i32> {
     if files.is_empty() {
-        return Err(anyhow!("no files provided. Use 'layer global add <files...>'"));
+        return Err(anyhow!(
+            "no files provided. Use 'layer global add <files...>'"
+        ));
     }
 
     let path = global_ignore_path()?;
@@ -24,7 +26,10 @@ pub fn add(files: Vec<String>) -> Result<i32> {
         }
 
         if known.contains(&normalized) {
-            println!("  {} '{normalized}' already in global gitignore", ui::info());
+            println!(
+                "  {} '{normalized}' already in global gitignore",
+                ui::info()
+            );
             continue;
         }
 
@@ -57,7 +62,10 @@ pub fn ls() -> Result<i32> {
         return Ok(2);
     }
 
-    println!("{}", ui::heading(&format!("Global gitignore ({}):", path.display())));
+    println!(
+        "{}",
+        ui::heading(&format!("Global gitignore ({}):", path.display()))
+    );
     for entry in &managed {
         println!("  {}", entry.value);
     }
@@ -74,15 +82,23 @@ pub fn rm(files: Vec<String>) -> Result<i32> {
     let all_entries = all_entries_vec(&file);
 
     if all_entries.is_empty() {
-        println!("Global gitignore ({}) is empty. Nothing to remove.", path.display());
+        println!(
+            "Global gitignore ({}) is empty. Nothing to remove.",
+            path.display()
+        );
         return Ok(2);
     }
 
     if files.is_empty() {
-        ui::require_tty("interactive mode requires a TTY. Use 'layer global rm <files...>' instead")?;
+        ui::require_tty(
+            "interactive mode requires a TTY. Use 'layer global rm <files...>' instead",
+        )?;
 
         let items = all_entries;
-        println!("{}", ui::heading("Select entries to remove from global gitignore"));
+        println!(
+            "{}",
+            ui::heading("Select entries to remove from global gitignore")
+        );
         let theme = ui::layer_theme();
         ui::print_select_hint();
         let selections = MultiSelect::with_theme(&theme)

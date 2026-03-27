@@ -84,7 +84,10 @@ pub fn is_tracked(repo_root: &Path, file: &str) -> Result<bool> {
 }
 
 pub fn list_untracked(repo_root: &Path) -> Result<Vec<String>> {
-    let out = git_stdout(&["ls-files", "--others", "--exclude-standard"], Some(repo_root))?;
+    let out = git_stdout(
+        &["ls-files", "--others", "--exclude-standard"],
+        Some(repo_root),
+    )?;
     Ok(out
         .lines()
         .map(str::trim)
@@ -132,7 +135,8 @@ fn check_ignore_verbose_with_mode(
         return Ok(None);
     }
 
-    let stdout = String::from_utf8(output.stdout).context("git check-ignore output was not UTF-8")?;
+    let stdout =
+        String::from_utf8(output.stdout).context("git check-ignore output was not UTF-8")?;
     let first = match stdout.lines().next() {
         Some(line) if !line.trim().is_empty() => line,
         _ => return Ok(None),
@@ -191,7 +195,8 @@ pub fn check_ignore_bulk(
         ));
     }
 
-    let stdout = String::from_utf8(output.stdout).context("git check-ignore output was not UTF-8")?;
+    let stdout =
+        String::from_utf8(output.stdout).context("git check-ignore output was not UTF-8")?;
     let mut out = HashMap::new();
     for line in stdout.lines() {
         let line = line.trim();
@@ -402,8 +407,16 @@ mod tests {
     fn is_local_exclude_source_matches_suffix() {
         let root = PathBuf::from("/repo");
         let exclude = PathBuf::from("/repo/.git/info/exclude");
-        assert!(is_local_exclude_source(&root, &exclude, "/repo/.git/info/exclude"));
-        assert!(is_local_exclude_source(&root, &exclude, ".git/info/exclude"));
+        assert!(is_local_exclude_source(
+            &root,
+            &exclude,
+            "/repo/.git/info/exclude"
+        ));
+        assert!(is_local_exclude_source(
+            &root,
+            &exclude,
+            ".git/info/exclude"
+        ));
     }
 
     #[test]
@@ -411,6 +424,10 @@ mod tests {
         let root = PathBuf::from("/repo");
         let exclude = PathBuf::from("/repo/.git/info/exclude");
         assert!(!is_local_exclude_source(&root, &exclude, ".gitignore"));
-        assert!(!is_local_exclude_source(&root, &exclude, "/home/user/.config/git/ignore"));
+        assert!(!is_local_exclude_source(
+            &root,
+            &exclude,
+            "/home/user/.config/git/ignore"
+        ));
     }
 }

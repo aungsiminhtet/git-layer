@@ -27,7 +27,10 @@ pub fn run(dry_run: bool, all: bool) -> Result<i32> {
 
     if dry_run {
         let total = stale_managed.len() + stale_user.len();
-        println!("{}", ui::heading(&format!("Would remove {} stale entries:", total)));
+        println!(
+            "{}",
+            ui::heading(&format!("Would remove {} stale entries:", total))
+        );
         for item in &stale_managed {
             println!("  {} {}", ui::stale(), item);
         }
@@ -39,7 +42,10 @@ pub fn run(dry_run: bool, all: bool) -> Result<i32> {
     }
 
     let total = stale_managed.len() + stale_user.len();
-    println!("{}", ui::heading(&format!("Found {} stale entries:", total)));
+    println!(
+        "{}",
+        ui::heading(&format!("Found {} stale entries:", total))
+    );
     for item in &stale_managed {
         println!("  {} {}", ui::stale(), item);
     }
@@ -47,7 +53,9 @@ pub fn run(dry_run: bool, all: bool) -> Result<i32> {
         println!("  {} {} {}", ui::stale(), item, ui::dim_text("(manual)"));
     }
 
-    ui::require_tty("interactive confirmation requires a TTY. Re-run in a terminal or use --dry-run")?;
+    ui::require_tty(
+        "interactive confirmation requires a TTY. Re-run in a terminal or use --dry-run",
+    )?;
 
     let confirmed = Confirm::new()
         .with_prompt("Remove these entries?")

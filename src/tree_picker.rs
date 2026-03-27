@@ -134,17 +134,30 @@ pub fn run(nodes: &[TreeNode]) -> io::Result<Option<Vec<String>>> {
                 }
             }
             Key::ArrowRight => {
-                if let FlatItem::Dir { dir_path, expanded: false, .. } = &items[cursor] {
+                if let FlatItem::Dir {
+                    dir_path,
+                    expanded: false,
+                    ..
+                } = &items[cursor]
+                {
                     expanded.insert(dir_path.clone());
                 }
             }
             Key::ArrowLeft => {
                 match &items[cursor] {
-                    FlatItem::Dir { dir_path, expanded: true, .. } => {
+                    FlatItem::Dir {
+                        dir_path,
+                        expanded: true,
+                        ..
+                    } => {
                         // Collapse this directory.
                         expanded.remove(dir_path.as_str());
                     }
-                    FlatItem::Dir { parent_dir: Some(parent), expanded: false, .. } => {
+                    FlatItem::Dir {
+                        parent_dir: Some(parent),
+                        expanded: false,
+                        ..
+                    } => {
                         // Already collapsed — collapse parent and jump to it.
                         let parent = parent.clone();
                         expanded.remove(parent.as_str());
@@ -152,7 +165,10 @@ pub fn run(nodes: &[TreeNode]) -> io::Result<Option<Vec<String>>> {
                             cursor = idx;
                         }
                     }
-                    FlatItem::File { parent_dir: Some(parent), .. } => {
+                    FlatItem::File {
+                        parent_dir: Some(parent),
+                        ..
+                    } => {
                         // Collapse parent directory and jump to it.
                         let parent = parent.clone();
                         expanded.remove(parent.as_str());
@@ -210,13 +226,7 @@ fn flatten_recursive(
                 parent_dir: parent_dir.map(String::from),
             });
             if is_expanded {
-                flatten_recursive(
-                    &node.children,
-                    expanded,
-                    depth + 1,
-                    Some(&node.path),
-                    items,
-                );
+                flatten_recursive(&node.children, expanded, depth + 1, Some(&node.path), items);
             }
         }
     }
@@ -237,7 +247,12 @@ fn compute_max_display_width(nodes: &[TreeNode], depth: usize) -> usize {
     max
 }
 
-fn format_row(item: &FlatItem, is_active: bool, is_selected: bool, max_display_width: usize) -> String {
+fn format_row(
+    item: &FlatItem,
+    is_active: bool,
+    is_selected: bool,
+    max_display_width: usize,
+) -> String {
     let check = if is_selected {
         style("✓").cyan().to_string()
     } else {
@@ -259,7 +274,11 @@ fn format_row(item: &FlatItem, is_active: bool, is_selected: bool, max_display_w
         } => {
             let indent = "  ".repeat(depth);
             let arrow = if *expanded { "▾ " } else { "▸ " };
-            (format!("{indent}{arrow}"), dir_path.clone(), category.clone())
+            (
+                format!("{indent}{arrow}"),
+                dir_path.clone(),
+                category.clone(),
+            )
         }
     };
 
@@ -290,9 +309,9 @@ fn clear_last_lines(term: &Term, count: usize) {
 }
 
 fn find_dir_index(items: &[FlatItem], dir_path: &str) -> Option<usize> {
-    items.iter().position(|it| {
-        matches!(it, FlatItem::Dir { dir_path: p, .. } if p == dir_path)
-    })
+    items
+        .iter()
+        .position(|it| matches!(it, FlatItem::Dir { dir_path: p, .. } if p == dir_path))
 }
 
 /// Collect selected paths with dedup: if a directory is selected, skip all descendants.
@@ -388,23 +407,21 @@ mod tests {
 
     #[test]
     fn nested_expand_shows_subdirs_only() {
-        let nodes = vec![
-            make_dir(
-                "agent-docs/",
-                "4 files",
-                vec![
-                    make_leaf("agent-docs/README.md", "untracked"),
-                    make_dir(
-                        "agent-docs/fixes/",
-                        "2 files",
-                        vec![
-                            make_leaf("agent-docs/fixes/fix1.md", "untracked"),
-                            make_leaf("agent-docs/fixes/fix2.md", "untracked"),
-                        ],
-                    ),
-                ],
-            ),
-        ];
+        let nodes = vec![make_dir(
+            "agent-docs/",
+            "4 files",
+            vec![
+                make_leaf("agent-docs/README.md", "untracked"),
+                make_dir(
+                    "agent-docs/fixes/",
+                    "2 files",
+                    vec![
+                        make_leaf("agent-docs/fixes/fix1.md", "untracked"),
+                        make_leaf("agent-docs/fixes/fix2.md", "untracked"),
+                    ],
+                ),
+            ],
+        )];
         // Collapsed: just the top dir.
         let expanded = HashSet::new();
         let items = flatten(&nodes, &expanded);
@@ -463,23 +480,21 @@ mod tests {
 
     #[test]
     fn collect_selected_nested_dedup() {
-        let nodes = vec![
-            make_dir(
-                "agent-docs/",
-                "4 files",
-                vec![
-                    make_leaf("agent-docs/README.md", "untracked"),
-                    make_dir(
-                        "agent-docs/fixes/",
-                        "2 files",
-                        vec![
-                            make_leaf("agent-docs/fixes/fix1.md", "untracked"),
-                            make_leaf("agent-docs/fixes/fix2.md", "untracked"),
-                        ],
-                    ),
-                ],
-            ),
-        ];
+        let nodes = vec![make_dir(
+            "agent-docs/",
+            "4 files",
+            vec![
+                make_leaf("agent-docs/README.md", "untracked"),
+                make_dir(
+                    "agent-docs/fixes/",
+                    "2 files",
+                    vec![
+                        make_leaf("agent-docs/fixes/fix1.md", "untracked"),
+                        make_leaf("agent-docs/fixes/fix2.md", "untracked"),
+                    ],
+                ),
+            ],
+        )];
         // Select top-level dir — should include everything, dedup children.
         let mut selected = HashSet::new();
         selected.insert("agent-docs/".to_string());

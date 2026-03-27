@@ -99,8 +99,7 @@ pub fn run_on(files: Vec<String>, dry_run: bool) -> Result<i32> {
         Ok(0)
     } else {
         // Enable specific entries
-        let disabled_set: HashSet<String> =
-            disabled_list.iter().map(|e| e.value.clone()).collect();
+        let disabled_set: HashSet<String> = disabled_list.iter().map(|e| e.value.clone()).collect();
         let active_set = exclude.entry_set();
         let targets: Vec<String> = files.iter().map(|f| normalize_entry(f)).collect();
 

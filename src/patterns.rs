@@ -173,7 +173,10 @@ mod tests {
 
     #[test]
     fn includes_required_patterns() {
-        let entries = KNOWN_SCAN_PATTERNS.iter().map(|p| p.entry).collect::<Vec<_>>();
+        let entries = KNOWN_SCAN_PATTERNS
+            .iter()
+            .map(|p| p.entry)
+            .collect::<Vec<_>>();
         assert!(entries.contains(&"CLAUDE.md"));
         assert!(entries.contains(&".cursorrules"));
         assert!(entries.contains(&".github/copilot-instructions.md"));
@@ -191,9 +194,15 @@ mod tests {
 
     #[test]
     fn no_removed_patterns() {
-        let labels = KNOWN_SCAN_PATTERNS.iter().map(|p| p.label).collect::<Vec<_>>();
+        let labels = KNOWN_SCAN_PATTERNS
+            .iter()
+            .map(|p| p.label)
+            .collect::<Vec<_>>();
         assert!(!labels.contains(&"Augment"));
-        let entries = KNOWN_SCAN_PATTERNS.iter().map(|p| p.entry).collect::<Vec<_>>();
+        let entries = KNOWN_SCAN_PATTERNS
+            .iter()
+            .map(|p| p.entry)
+            .collect::<Vec<_>>();
         assert!(!entries.contains(&"AI_INSTRUCTIONS.md"));
     }
 }

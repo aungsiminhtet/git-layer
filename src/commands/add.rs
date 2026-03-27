@@ -50,7 +50,7 @@ pub fn apply_add_entries(
     dry_run: bool,
 ) -> Result<AddSummary> {
     let mut summary = AddSummary::default();
-    let mut known_entries = exclude.entry_set();
+    let mut known_entries = exclude.managed_entry_set();
 
     for raw in entries {
         let normalized = normalize_entry(raw);
@@ -66,8 +66,13 @@ pub fn apply_add_entries(
         }
 
         if git::is_tracked(&ctx.root, &normalized)? {
-            ui::print_warning(&format!("'{normalized}' is tracked by Git — layering won't hide it until untracked"));
-            println!("  {}", ui::warn_text(&format!("git rm --cached {normalized}")));
+            ui::print_warning(&format!(
+                "'{normalized}' is tracked by Git — layering won't hide it until untracked"
+            ));
+            println!(
+                "  {}",
+                ui::warn_text(&format!("git rm --cached {normalized}"))
+            );
         }
 
         if dry_run {
@@ -127,7 +132,10 @@ fn build_tree(candidates: Vec<InteractiveCandidate>) -> Vec<tree_picker::TreeNod
     build_subtree(candidates, "")
 }
 
-fn build_subtree(candidates: Vec<InteractiveCandidate>, prefix: &str) -> Vec<tree_picker::TreeNode> {
+fn build_subtree(
+    candidates: Vec<InteractiveCandidate>,
+    prefix: &str,
+) -> Vec<tree_picker::TreeNode> {
     let mut root_files: Vec<tree_picker::TreeNode> = Vec::new();
     let mut dir_groups: BTreeMap<String, Vec<InteractiveCandidate>> = BTreeMap::new();
 
@@ -178,8 +186,11 @@ fn count_leaf_files(nodes: &[tree_picker::TreeNode]) -> usize {
         .sum()
 }
 
-fn collect_candidates(ctx: &RepoContext, exclude: &ExcludeFile) -> Result<Vec<InteractiveCandidate>> {
-    let excluded = exclude.entry_set();
+fn collect_candidates(
+    ctx: &RepoContext,
+    exclude: &ExcludeFile,
+) -> Result<Vec<InteractiveCandidate>> {
+    let excluded = exclude.managed_entry_set();
     let mut seen = HashSet::new();
     let mut out = Vec::new();
 

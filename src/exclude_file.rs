@@ -69,7 +69,11 @@ impl ExcludeFile {
             Some(end) => {
                 let managed = lines[start + 1..end].to_vec();
                 let suffix = lines[end + 1..].to_vec();
-                Self { prefix, managed, suffix }
+                Self {
+                    prefix,
+                    managed,
+                    suffix,
+                }
             }
             None => {
                 // Migration: start marker exists but no end marker.
@@ -147,6 +151,12 @@ impl ExcludeFile {
 
     pub fn entry_set(&self) -> HashSet<String> {
         self.entries().into_iter().map(|e| e.value).collect()
+    }
+
+    pub fn managed_entry_set(&self) -> HashSet<String> {
+        let mut set = self.entry_set();
+        set.extend(self.disabled_entries().into_iter().map(|e| e.value));
+        set
     }
 
     pub fn disable_entries(&mut self, targets: &HashSet<String>) -> Vec<String> {
@@ -413,7 +423,12 @@ mod tests {
     fn entries_returns_only_managed() {
         let file = ExcludeFile {
             prefix: vec!["user-file.txt".into()],
-            managed: vec!["CLAUDE.md".into(), "".into(), "# comment".into(), "Agents.md".into()],
+            managed: vec![
+                "CLAUDE.md".into(),
+                "".into(),
+                "# comment".into(),
+                "Agents.md".into(),
+            ],
             suffix: vec!["other.txt".into()],
         };
         let entries = file.entries();
@@ -449,6 +464,19 @@ mod tests {
     }
 
     #[test]
+    fn managed_entry_set_includes_disabled_entries() {
+        let file = ExcludeFile {
+            prefix: Vec::new(),
+            managed: vec!["CLAUDE.md".into(), "# [off] Agents.md".into()],
+            suffix: Vec::new(),
+        };
+        let set = file.managed_entry_set();
+        assert_eq!(set.len(), 2);
+        assert!(set.contains("CLAUDE.md"));
+        assert!(set.contains("Agents.md"));
+    }
+
+    #[test]
     fn remove_exact_only_from_managed() {
         let mut file = ExcludeFile {
             prefix: vec!["CLAUDE.md".into()],
@@ -466,7 +494,11 @@ mod tests {
     #[test]
     fn remove_from_user_only_touches_prefix_suffix() {
         let mut file = ExcludeFile {
-            prefix: vec!["gone.txt".into(), "# comment".into(), "keep-prefix.txt".into()],
+            prefix: vec![
+                "gone.txt".into(),
+                "# comment".into(),
+                "keep-prefix.txt".into(),
+            ],
             managed: vec!["gone.txt".into()],
             suffix: vec!["gone.txt".into(), "keep-suffix.txt".into()],
         };
@@ -531,10 +563,7 @@ mod tests {
         };
         let disabled = file.disable_all();
         assert_eq!(disabled.len(), 2);
-        assert_eq!(
-            file.managed,
-            vec!["# [off] CLAUDE.md", "# [off] Agents.md"]
-        );
+        assert_eq!(file.managed, vec!["# [off] CLAUDE.md", "# [off] Agents.md"]);
     }
 
     #[test]
@@ -572,8 +601,7 @@ mod tests {
             managed: vec!["CLAUDE.md".into(), "Agents.md".into(), ".claude/".into()],
             suffix: Vec::new(),
         };
-        let disabled =
-            file.disable_entries(&HashSet::from(["CLAUDE.md".to_string()]));
+        let disabled = file.disable_entries(&HashSet::from(["CLAUDE.md".to_string()]));
         assert_eq!(disabled, vec!["CLAUDE.md"]);
         assert_eq!(file.managed[0], "# [off] CLAUDE.md");
         assert_eq!(file.managed[1], "Agents.md");
@@ -583,14 +611,10 @@ mod tests {
     fn enable_specific_entries() {
         let mut file = ExcludeFile {
             prefix: Vec::new(),
-            managed: vec![
-                "# [off] CLAUDE.md".into(),
-                "# [off] Agents.md".into(),
-            ],
+            managed: vec!["# [off] CLAUDE.md".into(), "# [off] Agents.md".into()],
             suffix: Vec::new(),
         };
-        let enabled =
-            file.enable_entries(&HashSet::from(["CLAUDE.md".to_string()]));
+        let enabled = file.enable_entries(&HashSet::from(["CLAUDE.md".to_string()]));
         assert_eq!(enabled, vec!["CLAUDE.md"]);
         assert_eq!(file.managed[0], "CLAUDE.md");
         assert_eq!(file.managed[1], "# [off] Agents.md");

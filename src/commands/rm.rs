@@ -74,7 +74,11 @@ pub fn run(files: Vec<String>, dry_run: bool) -> Result<i32> {
         }
     }
 
-    let found: HashSet<_> = targets.iter().filter(|t| current.contains(*t)).cloned().collect();
+    let found: HashSet<_> = targets
+        .iter()
+        .filter(|t| current.contains(*t))
+        .cloned()
+        .collect();
     if found.is_empty() {
         if dry_run {
             ui::print_dry_run_notice();

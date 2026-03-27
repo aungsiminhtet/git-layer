@@ -29,7 +29,7 @@ pub fn run() -> Result<i32> {
         );
     }
 
-    let excluded_set = exclude.entry_set();
+    let excluded_set = exclude.managed_entry_set();
     let discovered_items = scan::discover_known_files_with_tracked(&ctx, &excluded_set, &tracked)?;
     let gitignored_count = discovered_items
         .iter()
@@ -54,7 +54,8 @@ pub fn run() -> Result<i32> {
     tracked_ctx.sort();
     tracked_ctx.dedup();
 
-    if exposed.is_empty() && discovered.is_empty() && tracked_ctx.is_empty() {
+    if disabled.is_empty() && exposed.is_empty() && discovered.is_empty() && tracked_ctx.is_empty()
+    {
         if layered.is_empty() && gitignored_count == 0 {
             println!(
                 "No context files found. Run {} to get started.",
@@ -80,18 +81,29 @@ pub fn run() -> Result<i32> {
                 layered.len()
             );
         }
-        if !disabled.is_empty() {
-            println!(
-                "  {} {} disabled ({})",
-                ui::disabled(),
-                disabled.len(),
-                ui::brand("layer on"),
-            );
-        }
         return Ok(0);
     }
 
     let mut has_section = false;
+
+    let all_active_clear =
+        layered.is_empty() && exposed.is_empty() && discovered.is_empty() && tracked_ctx.is_empty();
+    if !disabled.is_empty() && all_active_clear {
+        println!(
+            "  {} Layering is off — {} disabled ({}).",
+            ui::disabled(),
+            disabled.len(),
+            ui::brand("layer on"),
+        );
+        if gitignored_count > 0 {
+            println!(
+                "  {} {} already ignored by .gitignore.",
+                ui::info(),
+                gitignored_count,
+            );
+        }
+        has_section = true;
+    }
 
     // Layered section — dim, these are fine
     if !layered.is_empty() {
@@ -107,11 +119,7 @@ pub fn run() -> Result<i32> {
         if has_section {
             println!();
         }
-        println!(
-            "  {} Disabled ({}):",
-            ui::disabled(),
-            disabled.len()
-        );
+        println!("  {} Disabled ({}):", ui::disabled(), disabled.len());
         for entry in &disabled {
             println!("    {}", ui::dim_text(&entry.value));
         }
@@ -120,30 +128,23 @@ pub fn run() -> Result<i32> {
 
     // Exposed section — excluded entries that are still tracked
     if !exposed.is_empty() {
-        if has_section { println!(); }
-        println!("  {} Exposed ({}):", ui::exposed(), exposed.len());
-        let width = exposed.iter().map(|(e, _, _)| e.len()).max().unwrap_or(0);
-        for (entry, fix, tracked_files) in &exposed {
-            println!(
-                "    {:<width$}  {}",
-                entry,
-                ui::warn_text(fix),
-                width = width
-            );
-            for file in tracked_files {
-                println!(
-                    "      {}",
-                    ui::warn_text(&format!("git rm --cached {file}"))
-                );
-            }
+        if has_section {
+            println!();
         }
+        print_exposed_section("Exposed", &exposed);
         has_section = true;
     }
 
     // Discovered section — context files not yet layered
     if !discovered.is_empty() {
-        if has_section { println!(); }
-        println!("  {} {}:", ui::discovered(), ui::warn_text(&format!("Discovered ({})", discovered.len())));
+        if has_section {
+            println!();
+        }
+        println!(
+            "  {} {}:",
+            ui::discovered(),
+            ui::warn_text(&format!("Discovered ({})", discovered.len()))
+        );
         let width = discovered.iter().map(|e| e.len()).max().unwrap_or(0);
         for entry in &discovered {
             println!(
@@ -158,7 +159,9 @@ pub fn run() -> Result<i32> {
 
     // Tracked context files — exposed because they're tracked
     if !tracked_ctx.is_empty() {
-        if has_section { println!(); }
+        if has_section {
+            println!();
+        }
         println!(
             "  {} Exposed — tracked ({}):",
             ui::exposed(),
@@ -169,10 +172,7 @@ pub fn run() -> Result<i32> {
             println!(
                 "    {:<width$}  {}",
                 entry,
-                ui::warn_text(&format!(
-                    "git rm --cached {}",
-                    entry.trim_end_matches('/')
-                )),
+                ui::warn_text(&format!("git rm --cached {}", entry.trim_end_matches('/'))),
                 width = width
             );
         }
@@ -249,4 +249,23 @@ fn classify_entry(
     }
 
     layered.push(entry.to_string());
+}
+
+fn print_exposed_section(title: &str, exposed: &[(String, String, Vec<String>)]) {
+    println!("  {} {} ({}):", ui::exposed(), title, exposed.len());
+    let width = exposed.iter().map(|(e, _, _)| e.len()).max().unwrap_or(0);
+    for (entry, fix, tracked_files) in exposed {
+        println!(
+            "    {:<width$}  {}",
+            entry,
+            ui::warn_text(fix),
+            width = width
+        );
+        for file in tracked_files {
+            println!(
+                "      {}",
+                ui::warn_text(&format!("git rm --cached {file}"))
+            );
+        }
+    }
 }

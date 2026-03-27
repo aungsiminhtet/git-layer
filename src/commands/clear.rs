@@ -22,7 +22,9 @@ pub fn run(dry_run: bool) -> Result<i32> {
 
     ui::print_warning(&format!("This will remove all {count} entries."));
 
-    ui::require_tty("interactive confirmation requires a TTY. Re-run in a terminal or use --dry-run")?;
+    ui::require_tty(
+        "interactive confirmation requires a TTY. Re-run in a terminal or use --dry-run",
+    )?;
 
     let confirmed = Confirm::new()
         .with_prompt("Are you sure?")
