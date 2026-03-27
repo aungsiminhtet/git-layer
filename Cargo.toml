@@ -1,9 +1,9 @@
 [package]
 name = "git-layer"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 rust-version = "1.77"
-description = "layer — Context layers for git & agentic coding workflows. A fast CLI to manage local-only context files using Git's .git/info/exclude."
+description = "Manage .git/info/exclude so your personal AI files stay out of git — without touching .gitignore."
 license = "MIT"
 repository = "https://github.com/aungsiminhtet/layer"
 homepage = "https://github.com/aungsiminhtet/layer"
