@@ -56,17 +56,25 @@ layer on               # re-hide before committing
 
 `layer scan` recognizes files from these tools:
 
-| Tool             | Files                                                                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------ |
-| Claude Code      | `CLAUDE.md`, `.claude/`, `.claude.json`, `Agents.md`                                             |
-| OpenAI Codex     | `AGENTS.md`                                                                                      |
-| Cursor / PearAI  | `.cursorrules`, `.cursor/`, `.cursorignore`, `.pearai/`                                          |
-| Windsurf         | `.windsurfrules`, `.windsurf/`                                                                   |
-| Aider            | `.aider*`, `.aider.conf.yml`, `.aiderignore`                                                     |
-| Cline / Roo Code | `.clinerules`, `.cline/`, `.roocodes/`, `.roocoderules`                                          |
-| GitHub Copilot   | `.github/copilot-instructions.md`, `.github/copilot-custom-instructions.md`                      |
-| Continue / Void  | `.continue/`, `.void/`                                                                           |
-| Generic          | `agents.md`, `AI.md`, `AI_CONTEXT.md`, `CONTEXT.md`, `INSTRUCTIONS.md`, `PROMPT.md`, `SYSTEM.md` |
+| Tool | Files |
+| --- | --- |
+| Claude Code | `CLAUDE.md`, `.claude/` |
+| OpenAI Codex | `AGENTS.md`, `.codex/` |
+| Google Gemini CLI | `GEMINI.md`, `.gemini/` |
+| Cursor | `.cursorrules`, `.cursor/`, `.cursorignore` |
+| Windsurf | `.windsurfrules`, `.windsurf/` |
+| Aider | `.aider*`, `.aider.conf.yml`, `.aiderignore` |
+| Cline | `.clinerules`, `.clineignore` |
+| Roo Code | `.roo/`, `.roorules`, `.roomodes`, `.rooignore` |
+| GitHub Copilot | `.github/copilot-instructions.md` |
+| JetBrains Junie | `.junie/` |
+| Amazon Q Developer | `.amazonq/` |
+| Kiro | `.kiro/` |
+| Augment Code | `.augment/`, `.augment-guidelines` |
+| Devin | `.devin/` |
+| Trae | `.trae/` |
+| Continue | `.continuerc.json` |
+| Generic | `agents.md`, `AI.md`, `AI_CONTEXT.md`, `CONTEXT.md`, `INSTRUCTIONS.md`, `PROMPT.md`, `SYSTEM.md` |
 
 You can always add any file with `layer add <file>`.
 

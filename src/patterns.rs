@@ -22,35 +22,42 @@ pub const KNOWN_SCAN_PATTERNS: &[KnownPattern] = &[
         label: "Claude Code",
         category: PatternCategory::AiConfig,
     },
+    // OpenAI Codex
     KnownPattern {
-        entry: ".claude.json",
-        label: "Claude Code",
+        entry: "AGENTS.md",
+        label: "OpenAI Codex",
         category: PatternCategory::AiConfig,
     },
     KnownPattern {
-        entry: "Agents.md",
-        label: "Claude Code",
+        entry: ".codex/",
+        label: "OpenAI Codex",
         category: PatternCategory::AiConfig,
     },
-    // Cursor / PearAI
+    // Google Gemini CLI
+    KnownPattern {
+        entry: "GEMINI.md",
+        label: "Google Gemini CLI",
+        category: PatternCategory::AiConfig,
+    },
+    KnownPattern {
+        entry: ".gemini/",
+        label: "Google Gemini CLI",
+        category: PatternCategory::AiConfig,
+    },
+    // Cursor
     KnownPattern {
         entry: ".cursorrules",
-        label: "Cursor / PearAI",
+        label: "Cursor",
         category: PatternCategory::AiConfig,
     },
     KnownPattern {
         entry: ".cursor/",
-        label: "Cursor / PearAI",
+        label: "Cursor",
         category: PatternCategory::AiConfig,
     },
     KnownPattern {
         entry: ".cursorignore",
-        label: "Cursor / PearAI",
-        category: PatternCategory::AiConfig,
-    },
-    KnownPattern {
-        entry: ".pearai/",
-        label: "Cursor / PearAI",
+        label: "Cursor",
         category: PatternCategory::AiConfig,
     },
     // Windsurf
@@ -80,25 +87,36 @@ pub const KNOWN_SCAN_PATTERNS: &[KnownPattern] = &[
         label: "Aider",
         category: PatternCategory::AiConfig,
     },
-    // Cline / Roo Code
+    // Cline
     KnownPattern {
         entry: ".clinerules",
-        label: "Cline / Roo Code",
+        label: "Cline",
         category: PatternCategory::AiConfig,
     },
     KnownPattern {
-        entry: ".cline/",
-        label: "Cline / Roo Code",
+        entry: ".clineignore",
+        label: "Cline",
+        category: PatternCategory::AiConfig,
+    },
+    // Roo Code
+    KnownPattern {
+        entry: ".roo/",
+        label: "Roo Code",
         category: PatternCategory::AiConfig,
     },
     KnownPattern {
-        entry: ".roocodes/",
-        label: "Cline / Roo Code",
+        entry: ".roorules",
+        label: "Roo Code",
         category: PatternCategory::AiConfig,
     },
     KnownPattern {
-        entry: ".roocoderules",
-        label: "Cline / Roo Code",
+        entry: ".roomodes",
+        label: "Roo Code",
+        category: PatternCategory::AiConfig,
+    },
+    KnownPattern {
+        entry: ".rooignore",
+        label: "Roo Code",
         category: PatternCategory::AiConfig,
     },
     // GitHub Copilot
@@ -107,15 +125,51 @@ pub const KNOWN_SCAN_PATTERNS: &[KnownPattern] = &[
         label: "GitHub Copilot",
         category: PatternCategory::AiConfig,
     },
+    // JetBrains Junie
     KnownPattern {
-        entry: ".github/copilot-custom-instructions.md",
-        label: "GitHub Copilot",
+        entry: ".junie/",
+        label: "JetBrains Junie",
         category: PatternCategory::AiConfig,
     },
-    // OpenAI Codex
+    // Amazon Q Developer
     KnownPattern {
-        entry: "AGENTS.md",
-        label: "OpenAI Codex",
+        entry: ".amazonq/",
+        label: "Amazon Q Developer",
+        category: PatternCategory::AiConfig,
+    },
+    // Kiro
+    KnownPattern {
+        entry: ".kiro/",
+        label: "Kiro",
+        category: PatternCategory::AiConfig,
+    },
+    // Augment Code
+    KnownPattern {
+        entry: ".augment/",
+        label: "Augment Code",
+        category: PatternCategory::AiConfig,
+    },
+    KnownPattern {
+        entry: ".augment-guidelines",
+        label: "Augment Code",
+        category: PatternCategory::AiConfig,
+    },
+    // Devin
+    KnownPattern {
+        entry: ".devin/",
+        label: "Devin",
+        category: PatternCategory::AiConfig,
+    },
+    // Trae
+    KnownPattern {
+        entry: ".trae/",
+        label: "Trae",
+        category: PatternCategory::AiConfig,
+    },
+    // Continue
+    KnownPattern {
+        entry: ".continuerc.json",
+        label: "Continue",
         category: PatternCategory::AiConfig,
     },
     // Generic AI Context
@@ -154,17 +208,6 @@ pub const KNOWN_SCAN_PATTERNS: &[KnownPattern] = &[
         label: "Generic AI Context",
         category: PatternCategory::AiConfig,
     },
-    // Continue / Void
-    KnownPattern {
-        entry: ".continue/",
-        label: "Continue / Void",
-        category: PatternCategory::AiConfig,
-    },
-    KnownPattern {
-        entry: ".void/",
-        label: "Continue / Void",
-        category: PatternCategory::AiConfig,
-    },
 ];
 
 #[cfg(test)]
@@ -181,8 +224,11 @@ mod tests {
         assert!(entries.contains(&".cursorrules"));
         assert!(entries.contains(&".github/copilot-instructions.md"));
         assert!(entries.contains(&".aider*"));
-        assert!(entries.contains(&".roocodes/"));
-        assert!(entries.contains(&".continue/"));
+        assert!(entries.contains(&"GEMINI.md"));
+        assert!(entries.contains(&".junie/"));
+        assert!(entries.contains(&".amazonq/"));
+        assert!(entries.contains(&".roo/"));
+        assert!(entries.contains(&".continuerc.json"));
     }
 
     #[test]
@@ -194,15 +240,19 @@ mod tests {
 
     #[test]
     fn no_removed_patterns() {
-        let labels = KNOWN_SCAN_PATTERNS
-            .iter()
-            .map(|p| p.label)
-            .collect::<Vec<_>>();
-        assert!(!labels.contains(&"Augment"));
         let entries = KNOWN_SCAN_PATTERNS
             .iter()
             .map(|p| p.entry)
             .collect::<Vec<_>>();
-        assert!(!entries.contains(&"AI_INSTRUCTIONS.md"));
+        // Removed incorrect patterns
+        assert!(!entries.contains(&".roocodes/"));
+        assert!(!entries.contains(&".roocoderules"));
+        assert!(!entries.contains(&".cline/"));
+        assert!(!entries.contains(&".pearai/"));
+        assert!(!entries.contains(&".void/"));
+        assert!(!entries.contains(&".claude.json"));
+        assert!(!entries.contains(&"Agents.md"));
+        assert!(!entries.contains(&".github/copilot-custom-instructions.md"));
+        assert!(!entries.contains(&".continue/"));
     }
 }
