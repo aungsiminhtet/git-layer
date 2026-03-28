@@ -7,6 +7,11 @@ pub const SECTION_START: &str = "# managed by layer";
 pub const SECTION_END: &str = "# end layer";
 pub const DISABLED_PREFIX: &str = "# [off] ";
 
+/// Internal layer directory — must never appear in user-facing entry lists.
+fn is_layer_internal(entry: &str) -> bool {
+    entry == ".layer/" || entry == ".layer"
+}
+
 #[derive(Debug, Clone)]
 pub struct Entry {
     pub value: String,
@@ -89,12 +94,13 @@ impl ExcludeFile {
     }
 
     /// Returns entries within the layer-managed section only.
+    /// Filters out `.layer/` — the shadow repo must never appear in user-facing lists.
     pub fn entries(&self) -> Vec<Entry> {
         self.managed
             .iter()
             .filter_map(|line| {
                 let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
+                if trimmed.is_empty() || trimmed.starts_with('#') || is_layer_internal(trimmed) {
                     None
                 } else {
                     Some(Entry {
@@ -130,7 +136,7 @@ impl ExcludeFile {
                 let trimmed = line.trim();
                 trimmed.strip_prefix(DISABLED_PREFIX).and_then(|value| {
                     let value = value.trim();
-                    if value.is_empty() {
+                    if value.is_empty() || is_layer_internal(value) {
                         None
                     } else {
                         Some(Entry {
@@ -163,7 +169,7 @@ impl ExcludeFile {
         let mut disabled = Vec::new();
         for line in &mut self.managed {
             let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
+            if trimmed.is_empty() || trimmed.starts_with('#') || is_layer_internal(trimmed) {
                 continue;
             }
             if targets.contains(trimmed) {
@@ -178,7 +184,7 @@ impl ExcludeFile {
         let mut disabled = Vec::new();
         for line in &mut self.managed {
             let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
+            if trimmed.is_empty() || trimmed.starts_with('#') || is_layer_internal(trimmed) {
                 continue;
             }
             disabled.push(trimmed.to_string());

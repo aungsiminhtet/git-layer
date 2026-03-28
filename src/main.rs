@@ -1,7 +1,10 @@
+mod agent;
 mod commands;
+mod diff_viewer;
 mod exclude_file;
 mod git;
 mod patterns;
+mod shadow;
 mod tree_picker;
 mod ui;
 
@@ -55,6 +58,16 @@ enum Commands {
     Why(WhyArgs),
     /// Open .git/info/exclude in your editor
     Edit,
+    /// Create a snapshot of all layered files
+    Snapshot(SnapshotArgs),
+    /// Show change history for layered files
+    Log(LogArgs),
+    /// Show changes since last snapshot
+    Diff(DiffArgs),
+    /// Show per-line agent attribution for a layered file
+    Blame(BlameArgs),
+    /// Restore a layered file from history
+    Revert(RevertArgs),
 }
 
 #[derive(Args, Debug)]
@@ -170,6 +183,45 @@ struct WhyArgs {
     verbose: bool,
 }
 
+#[derive(Args, Debug)]
+struct SnapshotArgs {
+    /// Files to snapshot (all if omitted)
+    files: Vec<String>,
+    /// Snapshot message
+    #[arg(short, long)]
+    message: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct LogArgs {
+    /// Show history for a specific file
+    file: Option<String>,
+    /// Number of entries to show
+    #[arg(short = 'n', long)]
+    count: Option<usize>,
+}
+
+#[derive(Args, Debug)]
+struct DiffArgs {
+    /// Show diff for a specific file
+    file: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct BlameArgs {
+    /// File to show blame for
+    file: String,
+}
+
+#[derive(Args, Debug)]
+struct RevertArgs {
+    /// File to revert
+    file: String,
+    /// Number of snapshots to go back
+    #[arg(long, default_value = "1")]
+    to: usize,
+}
+
 fn dispatch(cli: Cli) -> Result<i32> {
     match cli.command {
         Some(Commands::Add(args)) => commands::add::run(args.files, args.interactive, args.dry_run),
@@ -194,6 +246,11 @@ fn dispatch(cli: Cli) -> Result<i32> {
         },
         Some(Commands::Why(args)) => commands::why_cmd::run(args.file, args.verbose),
         Some(Commands::Edit) => commands::edit::run(),
+        Some(Commands::Snapshot(args)) => commands::snapshot::run(args.files, args.message),
+        Some(Commands::Log(args)) => commands::log_cmd::run(args.file, args.count),
+        Some(Commands::Diff(args)) => commands::diff_cmd::run(args.file),
+        Some(Commands::Blame(args)) => commands::blame_cmd::run(args.file),
+        Some(Commands::Revert(args)) => commands::revert_cmd::run(args.file, args.to),
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;

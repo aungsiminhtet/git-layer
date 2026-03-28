@@ -873,3 +873,162 @@ fn add_dry_run_does_not_write() {
         );
     }
 }
+
+#[test]
+fn snapshot_specific_file_ignores_other_dirty_layered_files() {
+    let repo = init_repo();
+    fs::write(repo.path().join("A.md"), "a1\n").expect("write");
+    fs::write(repo.path().join("B.md"), "b1\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "A.md", "B.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("snapshot")
+        .assert()
+        .success();
+
+    fs::write(repo.path().join("B.md"), "b2\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["snapshot", "./A.md"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("No changes since last snapshot."));
+}
+
+#[test]
+fn snapshot_specific_file_commits_only_requested_file() {
+    let repo = init_repo();
+    fs::write(repo.path().join("A.md"), "a1\n").expect("write");
+    fs::write(repo.path().join("B.md"), "b1\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "A.md", "B.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("snapshot")
+        .assert()
+        .success();
+
+    fs::write(repo.path().join("A.md"), "a2\n").expect("write");
+    fs::write(repo.path().join("B.md"), "b2\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["snapshot", "A.md"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Snapshot created"));
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["diff", "B.md"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("-b1"))
+        .stdout(predicate::str::contains("+b2"));
+}
+
+#[test]
+fn blame_non_layered_file_does_not_create_auto_snapshot() {
+    let repo = init_repo();
+    fs::write(repo.path().join("CLAUDE.md"), "v1\n").expect("write");
+    fs::write(repo.path().join("README.md"), "regular\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("snapshot")
+        .assert()
+        .success();
+
+    fs::write(repo.path().join("CLAUDE.md"), "v2\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["blame", "README.md"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains(
+            "No history found for 'README.md'.",
+        ));
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("log")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("auto: snapshot for blame").not());
+}
+
+#[test]
+fn diff_shows_deleted_layered_file() {
+    let repo = init_repo();
+    fs::write(repo.path().join("CLAUDE.md"), "v1\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("snapshot")
+        .assert()
+        .success();
+
+    fs::remove_file(repo.path().join("CLAUDE.md")).expect("remove");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["diff", "CLAUDE.md"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CLAUDE.md"))
+        .stdout(predicate::str::contains("-v1"));
+}
+
+#[test]
+fn status_reports_deleted_layered_file_as_modified() {
+    let repo = init_repo();
+    fs::write(repo.path().join("CLAUDE.md"), "v1\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("snapshot")
+        .assert()
+        .success();
+
+    fs::remove_file(repo.path().join("CLAUDE.md")).expect("remove");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("History:"))
+        .stdout(predicate::str::contains("Modified (1)"))
+        .stdout(predicate::str::contains("CLAUDE.md"));
+}

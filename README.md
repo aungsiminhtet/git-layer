@@ -7,6 +7,13 @@ Developers drop personal context files into repos. `API_SPEC.md`, `BACKEND_GUIDE
 ## Install
 
 ```bash
+# macOS / Linux
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aungsiminhtet/git-layer/releases/latest/download/git-layer-installer.sh | sh
+
+# Windows
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/aungsiminhtet/git-layer/releases/latest/download/git-layer-installer.ps1 | iex"
+
+# From crates.io
 cargo install git-layer
 ```
 
@@ -14,6 +21,7 @@ cargo install git-layer
 
 ```bash
 layer scan                          # auto-detect AI context files and exclude them
+layer add                           # interactive tree picker
 layer add API_SPEC.md my-prompts/   # or add specific files
 layer status                        # see what's layered, exposed, and discovered
 ```
@@ -22,7 +30,7 @@ That's it. The files disappear from `git status` and stay on disk.
 
 ### Toggle visibility
 
-Editors (VS Code, Cursor, Claude Code) respect git exclude rules — so layered files vanish from autocomplete and file pickers too. If you need to reference them while prompting:
+Editors (Cursor, Claude Code, Codex) respect git exclude rules — so layered files vanish from autocomplete and file pickers too. If you need to reference them while prompting:
 
 ```bash
 layer off              # files reappear in editor
@@ -30,7 +38,29 @@ layer off CLAUDE.md    # or just one file
 layer on               # re-hide before committing
 ```
 
+### History tracking
+
+Layered files are intentionally hidden from Git. That keeps them out of commits, but it also means Git cannot show you when one of those files gets rewritten, deleted, or trimmed.
+
+`layer` keeps a private shadow history for those files, so you can inspect what changed and restore an earlier version when needed.
+
+```bash
+layer snapshot                  # save current state of all layered files
+layer log                       # show change history
+layer diff                      # interactive diff viewer (TUI)
+layer blame CLAUDE.md           # show per-line history
+layer revert CLAUDE.md          # restore from previous snapshot
+```
+
+`layer diff` opens an interactive terminal viewer for snapshot history and unsaved changes.
+
+![layer diff viewer showing snapshot history and unsaved changes](./assets/layer-diff-viewer.png)
+
+The shadow repo (`.layer/`) is local to your clone and initializes automatically on first snapshot.
+
 ## Commands
+
+### Layering
 
 | Command                | Description                                        |
 | ---------------------- | -------------------------------------------------- |
@@ -39,44 +69,50 @@ layer on               # re-hide before committing
 | `layer ls`             | List all managed entries with status               |
 | `layer scan`           | Auto-detect known AI files and exclude them        |
 | `layer status`         | Summary of layered, exposed, and discovered files  |
-| `layer off [files...]` | Temporarily un-hide entries                        |
-| `layer on [files...]`  | Re-hide disabled entries                           |
-| `layer doctor`         | Find exposed, stale, and redundant entries         |
-| `layer why <file>`     | Explain why a file is or isn't ignored             |
-| `layer clean`          | Remove entries for files that no longer exist      |
-| `layer clear`          | Remove all managed entries                         |
-| `layer edit`           | Open `.git/info/exclude` in `$EDITOR`              |
-| `layer backup`         | Save entries to `~/.layer-backups/`                |
-| `layer restore`        | Restore from a backup                              |
-| `layer global add`     | Add to `~/.config/git/ignore` (all repos)          |
-| `layer global ls`      | List global gitignore entries                      |
-| `layer global rm`      | Remove global entries                              |
 
-## Auto-detected files
+`layer scan` recognizes files from Claude Code, Cursor, Windsurf, Codex, Aider, Copilot, and many others. You can always add any file with `layer add <file>`.
 
-`layer scan` recognizes files from these tools:
+### Visibility
 
-| Tool | Files |
-| --- | --- |
-| Claude Code | `CLAUDE.md`, `.claude/` |
-| OpenAI Codex | `AGENTS.md`, `.codex/` |
-| Google Gemini CLI | `GEMINI.md`, `.gemini/` |
-| Cursor | `.cursorrules`, `.cursor/`, `.cursorignore` |
-| Windsurf | `.windsurfrules`, `.windsurf/` |
-| Aider | `.aider*`, `.aider.conf.yml`, `.aiderignore` |
-| Cline | `.clinerules`, `.clineignore` |
-| Roo Code | `.roo/`, `.roorules`, `.roomodes`, `.rooignore` |
-| GitHub Copilot | `.github/copilot-instructions.md` |
-| JetBrains Junie | `.junie/` |
-| Amazon Q Developer | `.amazonq/` |
-| Kiro | `.kiro/` |
-| Augment Code | `.augment/`, `.augment-guidelines` |
-| Devin | `.devin/` |
-| Trae | `.trae/` |
-| Continue | `.continuerc.json` |
-| Generic | `agents.md`, `AI.md`, `AI_CONTEXT.md`, `CONTEXT.md`, `INSTRUCTIONS.md`, `PROMPT.md`, `SYSTEM.md` |
+| Command                | Description                                   |
+| ---------------------- | --------------------------------------------- |
+| `layer off [files...]` | Temporarily un-hide entries                   |
+| `layer on [files...]`  | Re-hide disabled entries                      |
+| `layer why <file>`     | Explain why a file is or isn't ignored        |
+| `layer doctor`         | Find exposed, stale, and redundant entries    |
 
-You can always add any file with `layer add <file>`.
+### History
+
+| Command              | Description                                        |
+| -------------------- | -------------------------------------------------- |
+| `layer snapshot`     | Save current state of layered files                |
+| `layer log [file]`   | Show change history                                |
+| `layer diff [file]`  | Show changes since last snapshot (TUI in terminal) |
+| `layer blame <file>` | Show per-line history                              |
+| `layer revert <file>` | Restore file from a previous snapshot             |
+
+### Maintenance
+
+| Command       | Description                                   |
+| ------------- | --------------------------------------------- |
+| `layer clean` | Remove entries for files that no longer exist |
+| `layer clear` | Remove all managed entries                    |
+| `layer edit`  | Open `.git/info/exclude` in `$EDITOR`         |
+
+### Backup
+
+| Command         | Description                     |
+| --------------- | ------------------------------- |
+| `layer backup`  | Save entries to `~/.layer-backups/`  |
+| `layer restore` | Restore from a backup           |
+
+### Global
+
+| Command            | Description                               |
+| ------------------ | ----------------------------------------- |
+| `layer global add` | Add to `~/.config/git/ignore` (all repos) |
+| `layer global ls`  | List global gitignore entries             |
+| `layer global rm`  | Remove global entries                     |
 
 ## How it works
 
