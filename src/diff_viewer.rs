@@ -4,10 +4,10 @@ use crossterm::event::{
 };
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph};
 use ratatui::Terminal;
 use std::io;
 
@@ -25,7 +25,6 @@ impl Drop for TerminalGuard {
 struct SnapshotInfo {
     hash: String,
     message: String,
-    author: String,
     time: String,
 }
 
@@ -45,6 +44,15 @@ struct DiffViewer {
     diff_scroll: usize,
 }
 
+const TEXT: Color = Color::Rgb(226, 232, 240);
+const MUTED: Color = Color::Rgb(148, 163, 184);
+const DIM: Color = Color::Rgb(100, 116, 139);
+const ACCENT: Color = Color::Rgb(125, 211, 252);
+const ACCENT_BG: Color = Color::Rgb(8, 47, 73);
+const BORDER: Color = Color::Rgb(51, 65, 85);
+const ADDED: Color = Color::Rgb(74, 222, 128);
+const REMOVED: Color = Color::Rgb(248, 113, 113);
+
 impl DiffViewer {
     fn new(shadow: &ShadowRepo) -> Self {
         let snapshots = load_snapshots(shadow);
@@ -61,13 +69,18 @@ impl DiffViewer {
     }
 
     fn refresh_files(&mut self, shadow: &ShadowRepo) {
+        let selected = self
+            .file_state
+            .selected()
+            .and_then(|idx| self.files.get(idx))
+            .cloned();
         let (base, target) = self.snapshot_range();
         self.files = get_changed_files(shadow, &base, &target);
-        if !self.files.is_empty() {
-            self.file_state.select(Some(0));
-        } else {
-            self.file_state.select(None);
-        }
+        let next_selection = selected
+            .as_ref()
+            .and_then(|file| self.files.iter().position(|path| path == file))
+            .or_else(|| (!self.files.is_empty()).then_some(0));
+        self.file_state.select(next_selection);
         self.refresh_diff(shadow);
     }
 
@@ -97,14 +110,24 @@ impl DiffViewer {
         }
     }
 
-    fn snapshot_label(&self) -> String {
+    fn snapshot_meta(&self) -> String {
         if self.current_snapshot == 0 {
             "Unsaved changes".to_string()
-        } else if let Some(s) = self.snapshots.get(self.current_snapshot - 1) {
-            format!("{} — {} ({}, {})", s.hash, s.message, s.time, s.author)
+        } else if let Some(snapshot) = self.snapshots.get(self.current_snapshot - 1) {
+            format!(
+                "snapshot {}  •  {}  •  {}",
+                snapshot.hash, snapshot.message, snapshot.time
+            )
         } else {
             format!("Snapshot #{}", self.current_snapshot)
         }
+    }
+
+    fn selected_file(&self) -> Option<&str> {
+        self.file_state
+            .selected()
+            .and_then(|idx| self.files.get(idx))
+            .map(|file| file.as_str())
     }
 
     fn prev_snapshot(&mut self, shadow: &ShadowRepo) {
@@ -122,21 +145,15 @@ impl DiffViewer {
     }
 
     fn select_prev_file(&mut self, shadow: &ShadowRepo) {
-        if let Some(idx) = self.file_state.selected() {
-            if idx > 0 {
-                self.file_state.select(Some(idx - 1));
-                self.refresh_diff(shadow);
-            }
-        }
+        let next = prev_wrapped_index(self.files.len(), self.file_state.selected());
+        self.file_state.select(next);
+        self.refresh_diff(shadow);
     }
 
     fn select_next_file(&mut self, shadow: &ShadowRepo) {
-        if let Some(idx) = self.file_state.selected() {
-            if idx + 1 < self.files.len() {
-                self.file_state.select(Some(idx + 1));
-                self.refresh_diff(shadow);
-            }
-        }
+        let next = next_wrapped_index(self.files.len(), self.file_state.selected());
+        self.file_state.select(next);
+        self.refresh_diff(shadow);
     }
 
     fn scroll_up(&mut self) {
@@ -192,11 +209,16 @@ pub fn run_interactive(shadow: &ShadowRepo) -> anyhow::Result<()> {
 
             let cols = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Length(28), Constraint::Min(40)])
+                .constraints([
+                    Constraint::Length(26),
+                    Constraint::Length(1),
+                    Constraint::Min(40),
+                ])
                 .split(rows[1]);
 
             render_file_list(frame, cols[0], &mut viewer);
-            diff_area_height = render_diff(frame, cols[1], &viewer);
+            render_divider(frame, cols[1]);
+            diff_area_height = render_diff(frame, cols[2], &viewer);
             render_footer(frame, rows[2]);
         })?;
 
@@ -252,14 +274,13 @@ fn render_snapshot_bar(frame: &mut ratatui::Frame, area: Rect, viewer: &DiffView
     let current = viewer.current_snapshot;
 
     let mut spans = vec![Span::styled(
-        " Snapshots: ",
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD),
+        " History ",
+        Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
     )];
 
-    // Oldest snapshots first (left = oldest, right = newest/unsaved)
-    let max_visible = (area.width as usize).saturating_sub(30).min(total);
+    let max_visible = ((area.width as usize).saturating_sub(24) / 10)
+        .max(1)
+        .min(total);
     let selected = current.saturating_sub(1);
     let start = if max_visible == 0 || selected < max_visible {
         0
@@ -272,8 +293,8 @@ fn render_snapshot_bar(frame: &mut ratatui::Frame, area: Rect, viewer: &DiffView
 
     if hidden_older > 0 {
         spans.push(Span::styled(
-            format!("+{} more ", hidden_older),
-            Style::default().fg(Color::DarkGray),
+            format!("…{} ", hidden_older),
+            Style::default().fg(DIM),
         ));
     }
 
@@ -282,15 +303,15 @@ fn render_snapshot_bar(frame: &mut ratatui::Frame, area: Rect, viewer: &DiffView
         spans.push(Span::raw(" "));
         if idx == current {
             let label = if let Some(s) = viewer.snapshots.get(i) {
-                format!("[{} {}]", s.hash, s.time)
+                format!("[{} {}]", s.hash, compact_age(&s.time))
             } else {
                 format!("[#{}]", idx)
             };
             spans.push(Span::styled(
                 label,
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
+                    .fg(TEXT)
+                    .bg(ACCENT_BG)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
@@ -299,15 +320,15 @@ fn render_snapshot_bar(frame: &mut ratatui::Frame, area: Rect, viewer: &DiffView
             } else {
                 format!(" #{} ", idx)
             };
-            spans.push(Span::styled(label, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(label, Style::default().fg(MUTED)));
         }
     }
 
     if hidden_newer > 0 {
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
-            format!("+{} newer", hidden_newer),
-            Style::default().fg(Color::DarkGray),
+            format!("…{}", hidden_newer),
+            Style::default().fg(DIM),
         ));
     }
 
@@ -316,109 +337,266 @@ fn render_snapshot_bar(frame: &mut ratatui::Frame, area: Rect, viewer: &DiffView
         spans.push(Span::styled(
             "[unsaved]",
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
+                .fg(TEXT)
+                .bg(ACCENT_BG)
                 .add_modifier(Modifier::BOLD),
         ));
     } else {
-        spans.push(Span::styled(
-            " unsaved ",
-            Style::default().fg(Color::DarkGray),
-        ));
+        spans.push(Span::styled(" unsaved ", Style::default().fg(DIM)));
     }
 
-    let bar = Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::BOTTOM));
+    let bar = Paragraph::new(Line::from(spans)).block(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(BORDER)),
+    );
 
     frame.render_widget(bar, area);
 }
 
 fn render_file_list(frame: &mut ratatui::Frame, area: Rect, viewer: &mut DiffViewer) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(1)])
+        .split(area);
+
+    let title = Line::from(vec![
+        Span::styled(
+            " Files ",
+            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("({})", viewer.files.len()),
+            Style::default().fg(DIM),
+        ),
+    ]);
+    let title_bar = Paragraph::new(title).block(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(BORDER)),
+    );
+    frame.render_widget(title_bar, rows[0]);
+
+    if viewer.files.is_empty() {
+        let empty = Paragraph::new("No changed files")
+            .style(Style::default().fg(DIM))
+            .alignment(Alignment::Left);
+        frame.render_widget(empty, rows[1]);
+        return;
+    }
+
     let items: Vec<ListItem> = viewer
         .files
         .iter()
-        .map(|f| ListItem::new(f.as_str()))
+        .map(|file| ListItem::new(file.as_str()))
         .collect();
 
-    let title = format!(" Files ({}) ", viewer.files.len());
     let list = List::new(items)
-        .block(Block::default().title(title).borders(Borders::ALL))
         .highlight_style(
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
+                .fg(TEXT)
+                .bg(ACCENT_BG)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("> ");
+        .highlight_symbol("▌ ")
+        .highlight_spacing(HighlightSpacing::Always);
 
-    frame.render_stateful_widget(list, area, &mut viewer.file_state);
+    frame.render_stateful_widget(list, rows[1], &mut viewer.file_state);
 }
 
 fn render_diff(frame: &mut ratatui::Frame, area: Rect, viewer: &DiffViewer) -> usize {
-    let inner_height = area.height.saturating_sub(2) as usize;
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(2),
+            Constraint::Min(1),
+        ])
+        .split(area);
+
+    let title = viewer.selected_file().unwrap_or("No changed files");
+    frame.render_widget(
+        Paragraph::new(title).style(Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
+        rows[0],
+    );
+
+    let meta = viewer.snapshot_meta();
+    let meta_bar = Paragraph::new(meta)
+        .style(Style::default().fg(MUTED))
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(Style::default().fg(BORDER)),
+        );
+    frame.render_widget(meta_bar, rows[1]);
+
+    let inner_height = rows[2].height as usize;
+    if viewer.diff_lines.is_empty() {
+        let empty = Paragraph::new("No changes in this view")
+            .style(Style::default().fg(DIM))
+            .alignment(Alignment::Left);
+        frame.render_widget(empty, rows[2]);
+        return inner_height;
+    }
 
     let visible: Vec<Line> = viewer
         .diff_lines
         .iter()
         .skip(viewer.diff_scroll)
         .take(inner_height)
-        .map(|line| match line {
-            DiffLine::Added(text) => Line::from(Span::styled(
-                text.clone(),
-                Style::default().fg(Color::Green),
-            )),
-            DiffLine::Removed(text) => {
-                Line::from(Span::styled(text.clone(), Style::default().fg(Color::Red)))
-            }
-            DiffLine::Context(text) => Line::from(Span::styled(
-                text.clone(),
-                Style::default().fg(Color::DarkGray),
-            )),
-        })
+        .map(render_diff_line)
         .collect();
 
-    let label = viewer.snapshot_label();
-    let title = format!(" {} ", label);
-
-    let paragraph =
-        Paragraph::new(visible).block(Block::default().title(title).borders(Borders::ALL));
-
-    frame.render_widget(paragraph, area);
+    frame.render_widget(Paragraph::new(visible), rows[2]);
     inner_height
 }
 
 fn render_footer(frame: &mut ratatui::Frame, area: Rect) {
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled(" ↑↓ ", Style::default().fg(Color::Cyan)),
-        Span::styled("scroll  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("tab/shift+tab ", Style::default().fg(Color::Cyan)),
-        Span::styled("file  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("←→ ", Style::default().fg(Color::Cyan)),
-        Span::styled("snapshot  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("^u/^d ", Style::default().fg(Color::Cyan)),
-        Span::styled("half-page  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("q ", Style::default().fg(Color::Cyan)),
-        Span::styled("quit", Style::default().fg(Color::DarkGray)),
+    let help = Paragraph::new(Line::from(vec![
+        Span::styled(" q ", Style::default().fg(ACCENT)),
+        Span::styled("quit  ", Style::default().fg(DIM)),
+        Span::styled(" tab ", Style::default().fg(ACCENT)),
+        Span::styled("files  ", Style::default().fg(DIM)),
+        Span::styled(" ←→ ", Style::default().fg(ACCENT)),
+        Span::styled("snapshots  ", Style::default().fg(DIM)),
+        Span::styled(" ↑↓ ", Style::default().fg(ACCENT)),
+        Span::styled("scroll  ", Style::default().fg(DIM)),
+        Span::styled(" ^u/^d ", Style::default().fg(ACCENT)),
+        Span::styled("page", Style::default().fg(DIM)),
     ]));
 
-    frame.render_widget(footer, area);
+    frame.render_widget(help, area);
+}
+
+fn render_divider(frame: &mut ratatui::Frame, area: Rect) {
+    let lines: Vec<Line> = (0..area.height)
+        .map(|_| Line::from(Span::styled("│", Style::default().fg(BORDER))))
+        .collect();
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_diff_line(line: &DiffLine) -> Line<'static> {
+    match line {
+        DiffLine::Added(text) => styled_diff_line(text, ADDED),
+        DiffLine::Removed(text) => styled_diff_line(text, REMOVED),
+        DiffLine::Context(text) => Line::from(Span::styled(text.clone(), Style::default().fg(DIM))),
+    }
+}
+
+fn styled_diff_line(text: &str, color: Color) -> Line<'static> {
+    if let Some((prefix, rest)) = text.chars().next().map(|prefix| (prefix, &text[1..])) {
+        Line::from(vec![
+            Span::styled(
+                prefix.to_string(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(rest.to_string(), Style::default().fg(color)),
+        ])
+    } else {
+        Line::default()
+    }
+}
+
+fn compact_age(age: &str) -> String {
+    let age = age.trim();
+    if age.is_empty() {
+        return String::new();
+    }
+
+    match age {
+        "just now" => return "now".to_string(),
+        "a minute ago" => return "1m".to_string(),
+        "an hour ago" => return "1h".to_string(),
+        "yesterday" => return "1d".to_string(),
+        _ => {}
+    }
+
+    let mut parts = age.split_whitespace();
+    let value = match parts.next() {
+        Some(value) => value,
+        None => return age.to_string(),
+    };
+    let unit = match parts.next() {
+        Some(unit) => unit,
+        None => return age.to_string(),
+    };
+
+    let suffix = match unit {
+        "second" | "seconds" => "s",
+        "minute" | "minutes" => "m",
+        "hour" | "hours" => "h",
+        "day" | "days" => "d",
+        "week" | "weeks" => "w",
+        "month" | "months" => "mo",
+        "year" | "years" => "y",
+        _ => return age.to_string(),
+    };
+
+    format!("{value}{suffix}")
+}
+
+fn next_wrapped_index(len: usize, selected: Option<usize>) -> Option<usize> {
+    match len {
+        0 => None,
+        _ => Some(match selected {
+            Some(idx) if idx + 1 < len => idx + 1,
+            _ => 0,
+        }),
+    }
+}
+
+fn prev_wrapped_index(len: usize, selected: Option<usize>) -> Option<usize> {
+    match len {
+        0 => None,
+        _ => Some(match selected {
+            Some(idx) if idx > 0 => idx - 1,
+            _ => len - 1,
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{next_wrapped_index, prev_wrapped_index};
+
+    #[test]
+    fn next_wrapped_index_loops_to_start() {
+        assert_eq!(next_wrapped_index(3, Some(0)), Some(1));
+        assert_eq!(next_wrapped_index(3, Some(1)), Some(2));
+        assert_eq!(next_wrapped_index(3, Some(2)), Some(0));
+    }
+
+    #[test]
+    fn prev_wrapped_index_loops_to_end() {
+        assert_eq!(prev_wrapped_index(3, Some(2)), Some(1));
+        assert_eq!(prev_wrapped_index(3, Some(1)), Some(0));
+        assert_eq!(prev_wrapped_index(3, Some(0)), Some(2));
+    }
+
+    #[test]
+    fn wrapped_index_handles_empty_or_unselected_state() {
+        assert_eq!(next_wrapped_index(0, None), None);
+        assert_eq!(prev_wrapped_index(0, None), None);
+        assert_eq!(next_wrapped_index(3, None), Some(0));
+        assert_eq!(prev_wrapped_index(3, None), Some(2));
+    }
 }
 
 fn load_snapshots(shadow: &ShadowRepo) -> Vec<SnapshotInfo> {
     let output = shadow
-        .shadow_git(&["log", "--format=%h|%s|%an|%ar", "--skip=1"])
+        .shadow_git(&["log", "--format=%h|%s|%ar", "--skip=1"])
         .unwrap_or_default();
 
     output
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|line| {
-            let parts: Vec<&str> = line.splitn(4, '|').collect();
-            if parts.len() >= 4 {
+            let parts: Vec<&str> = line.splitn(3, '|').collect();
+            if parts.len() >= 3 {
                 Some(SnapshotInfo {
                     hash: parts[0].to_string(),
                     message: parts[1].to_string(),
-                    author: parts[2].to_string(),
-                    time: parts[3].to_string(),
+                    time: parts[2].to_string(),
                 })
             } else {
                 None
