@@ -55,9 +55,10 @@ pub fn run(files: Vec<String>, dry_run: bool) -> Result<i32> {
         }
 
         exclude.write(&ctx.exclude_path)?;
-        for item in removed {
+        for item in &removed {
             println!("  {} Removed '{item}'", ui::ok());
         }
+
         return Ok(0);
     }
 

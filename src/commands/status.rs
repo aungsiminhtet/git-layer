@@ -2,6 +2,7 @@ use crate::commands::scan;
 use crate::exclude_file::ensure_exclude_file;
 use crate::git;
 use crate::git::PatternMatchSummary;
+use crate::shadow::ShadowRepo;
 use crate::ui;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
@@ -54,13 +55,29 @@ pub fn run() -> Result<i32> {
     tracked_ctx.sort();
     tracked_ctx.dedup();
 
-    if disabled.is_empty() && exposed.is_empty() && discovered.is_empty() && tracked_ctx.is_empty()
+    let mut history_info = None;
+    let mut modified_files = Vec::new();
+    if let Some(shadow) = ShadowRepo::open(&ctx.root) {
+        if let Ok(files) = crate::shadow::resolve_history_files(&ctx, &entries, Some(&shadow)) {
+            let _ = shadow.track_files(&files);
+        }
+        history_info = shadow.last_snapshot_info().ok().flatten();
+        modified_files = shadow.changed_files().unwrap_or_default();
+    }
+
+    if disabled.is_empty()
+        && exposed.is_empty()
+        && discovered.is_empty()
+        && tracked_ctx.is_empty()
+        && history_info.is_none()
+        && modified_files.is_empty()
     {
         if layered.is_empty() && gitignored_count == 0 {
             println!(
                 "No context files found. Run {} to get started.",
                 ui::brand("layer scan")
             );
+            return Ok(0);
         } else if layered.is_empty() {
             println!(
                 "  {} All clear — {} already ignored by .gitignore.",
@@ -81,7 +98,6 @@ pub fn run() -> Result<i32> {
                 layered.len()
             );
         }
-        return Ok(0);
     }
 
     let mut has_section = false;
@@ -175,6 +191,29 @@ pub fn run() -> Result<i32> {
                 ui::warn_text(&format!("git rm --cached {}", entry.trim_end_matches('/'))),
                 width = width
             );
+        }
+    }
+
+    if let Some(info) = history_info {
+        if has_section {
+            println!();
+        }
+        println!("  {} History: {info}", ui::dim_text("~"));
+        has_section = true;
+    }
+
+    if !modified_files.is_empty() {
+        if has_section {
+            println!();
+        }
+        println!(
+            "  {} Modified ({}) — run {}:",
+            ui::discovered(),
+            modified_files.len(),
+            ui::brand("layer snapshot"),
+        );
+        for file in &modified_files {
+            println!("    {}", ui::warn_text(file));
         }
     }
 
