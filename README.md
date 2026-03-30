@@ -43,9 +43,9 @@ layer on               # re-hide before committing
 
 ### History tracking
 
-Layered files are intentionally hidden from Git. That keeps them out of commits, but it also means Git cannot show you when one of those files gets rewritten, deleted, or trimmed.
+Layered files are intentionally hidden from Git. That keeps them out of commits, but it also means Git cannot show you when one of those files gets rewritten, deleted, or trimmed. If a coding agent overwrites or removes a local `SPEC.md`, `CLAUDE.md`, or other context file without you noticing, that context can disappear with no normal Git history to recover it from.
 
-`layer` keeps a private shadow history for those files, so you can inspect what changed and restore an earlier version when needed.
+`layer` keeps a private shadow history for those files, so you can see exactly what changed and restore an earlier version when needed.
 
 ```bash
 layer snapshot                  # save current state of all layered files
