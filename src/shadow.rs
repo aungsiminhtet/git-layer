@@ -1,10 +1,13 @@
-use crate::agent::AgentInfo;
 use crate::exclude_file::Entry;
 use crate::git::{self, RepoContext};
 use anyhow::{anyhow, Context, Result};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use walkdir::WalkDir;
+
+const SHADOW_AUTHOR: &str = "layer <layer@layer.local>";
+pub const SHADOW_INIT_MESSAGE: &str = "layer: init history tracking";
 
 #[derive(Debug, Clone)]
 pub struct ShadowRepo {
@@ -47,9 +50,9 @@ impl ShadowRepo {
             "commit",
             "--allow-empty",
             "-m",
-            "layer: init history tracking",
+            SHADOW_INIT_MESSAGE,
             "--author",
-            "layer <layer@layer.local>",
+            SHADOW_AUTHOR,
         ])?;
 
         // Ensure .layer/ is in prefix (not managed section) so layer commands ignore it
@@ -158,18 +161,12 @@ impl ShadowRepo {
         Ok(output.status.code() == Some(1))
     }
 
-    pub fn snapshot_paths(
-        &self,
-        message: &str,
-        agent: &AgentInfo,
-        files: &[String],
-    ) -> Result<bool> {
+    pub fn snapshot_paths(&self, message: &str, files: &[String]) -> Result<bool> {
         if !self.has_staged_changes(files)? {
             return Ok(false);
         }
 
-        let author = format!("{} <{}>", agent.name, agent.email());
-        let mut args = vec!["commit", "-m", message, "--author", &author, "--"];
+        let mut args = vec!["commit", "-m", message, "--author", SHADOW_AUTHOR, "--"];
         for file in files {
             args.push(file);
         }
@@ -186,13 +183,38 @@ impl ShadowRepo {
             .collect())
     }
 
-    pub fn changed_files(&self) -> Result<Vec<String>> {
-        let output = self.shadow_git(&["diff", "--name-only", "HEAD"])?;
-        Ok(output
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(|l| l.trim().to_string())
-            .collect())
+    pub fn pending_snapshot_files(&self, current_files: &[String]) -> Result<Vec<String>> {
+        if current_files.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let tracked_files: HashSet<String> = self.tracked_files()?.into_iter().collect();
+        let mut pending = Vec::new();
+        let mut diff_targets = Vec::new();
+
+        for file in current_files {
+            if tracked_files.contains(file) {
+                diff_targets.push(file.as_str());
+            } else {
+                pending.push(file.clone());
+            }
+        }
+
+        if !diff_targets.is_empty() {
+            let mut args = vec!["diff", "--name-only", "HEAD", "--"];
+            args.extend(diff_targets);
+            let output = self.shadow_git(&args)?;
+            pending.extend(
+                output
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .map(|line| line.trim().to_string()),
+            );
+        }
+
+        pending.sort();
+        pending.dedup();
+        Ok(pending)
     }
 
     pub fn commit_count(&self) -> Result<usize> {
@@ -207,7 +229,7 @@ impl ShadowRepo {
             return Ok(None);
         }
 
-        let output = self.shadow_git(&["log", "-1", "--format=%ar by %an"])?;
+        let output = self.shadow_git(&["log", "-1", "--format=%cr"])?;
         let info = output.trim();
         if info.is_empty() {
             return Ok(None);

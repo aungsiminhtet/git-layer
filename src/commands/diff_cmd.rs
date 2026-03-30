@@ -25,13 +25,11 @@ pub fn run(file: Option<String>) -> Result<i32> {
 
     shadow.track_files(&files)?;
 
-    // Interactive mode for TTY with no specific file filter
     if ui::is_stdout_tty() && file.is_none() {
         diff_viewer::run_interactive(&shadow)?;
         return Ok(0);
     }
 
-    // Plain diff for non-TTY or specific file
     let color_arg = if ui::is_stdout_tty() {
         "--color=always"
     } else {

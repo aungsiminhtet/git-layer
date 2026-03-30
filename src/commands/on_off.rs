@@ -15,7 +15,6 @@ pub fn run_off(files: Vec<String>, dry_run: bool) -> Result<i32> {
     }
 
     if files.is_empty() {
-        // Disable all
         if dry_run {
             for entry in &active {
                 println!("  {} Would disable {}", ui::info(), entry.value);
@@ -31,7 +30,6 @@ pub fn run_off(files: Vec<String>, dry_run: bool) -> Result<i32> {
         }
         Ok(0)
     } else {
-        // Disable specific entries
         let active_set: HashSet<String> = active.iter().map(|e| e.value.clone()).collect();
         let disabled_set = exclude.disabled_entry_set();
         let targets: Vec<String> = files.iter().map(|f| normalize_entry(f)).collect();
@@ -82,7 +80,6 @@ pub fn run_on(files: Vec<String>, dry_run: bool) -> Result<i32> {
     }
 
     if files.is_empty() {
-        // Enable all
         if dry_run {
             for entry in &disabled_list {
                 println!("  {} Would enable {}", ui::info(), entry.value);
@@ -98,7 +95,6 @@ pub fn run_on(files: Vec<String>, dry_run: bool) -> Result<i32> {
         }
         Ok(0)
     } else {
-        // Enable specific entries
         let disabled_set: HashSet<String> = disabled_list.iter().map(|e| e.value.clone()).collect();
         let active_set = exclude.entry_set();
         let targets: Vec<String> = files.iter().map(|f| normalize_entry(f)).collect();

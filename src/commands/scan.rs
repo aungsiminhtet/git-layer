@@ -178,6 +178,7 @@ pub fn discover_known_files_with_tracked(
     tracked: &HashSet<String>,
 ) -> Result<Vec<AiDiscovery>> {
     let mut seen = HashSet::new();
+    let discovered = discover_paths(&ctx.root);
 
     // First pass: collect all candidate paths with their pattern metadata.
     struct Candidate {
@@ -189,7 +190,7 @@ pub fn discover_known_files_with_tracked(
     let mut check_ignore_paths = Vec::new();
 
     for pattern in KNOWN_SCAN_PATTERNS {
-        for path in resolve_pattern_paths(&ctx.root, pattern.entry)? {
+        for path in resolve_pattern_paths_in(&discovered, pattern.entry) {
             let normalized = normalize_entry(&path);
             if normalized.is_empty() || !seen.insert(normalized.clone()) {
                 continue;
@@ -276,19 +277,6 @@ pub fn discover_known_files_with_tracked(
     Ok(out)
 }
 
-pub fn resolve_pattern_paths(repo_root: &Path, pattern: &str) -> Result<Vec<String>> {
-    let discovered = discover_paths(repo_root);
-    let mut matches = Vec::new();
-
-    for item in discovered {
-        if pattern_matches_path(pattern, &item) {
-            matches.push(item.display);
-        }
-    }
-
-    Ok(matches)
-}
-
 #[derive(Debug, Clone)]
 struct DiscoveredPath {
     display: String,
@@ -336,6 +324,14 @@ fn discover_paths(repo_root: &Path) -> Vec<DiscoveredPath> {
     }
 
     out
+}
+
+fn resolve_pattern_paths_in(discovered: &[DiscoveredPath], pattern: &str) -> Vec<String> {
+    discovered
+        .iter()
+        .filter(|item| pattern_matches_path(pattern, item))
+        .map(|item| item.display.clone())
+        .collect()
 }
 
 fn pattern_matches_path(pattern: &str, item: &DiscoveredPath) -> bool {

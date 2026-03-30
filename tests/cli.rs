@@ -1032,3 +1032,80 @@ fn status_reports_deleted_layered_file_as_modified() {
         .stdout(predicate::str::contains("Modified (1)"))
         .stdout(predicate::str::contains("CLAUDE.md"));
 }
+
+#[test]
+fn status_reports_new_layered_file_as_modified_after_history_started() {
+    let repo = init_repo();
+    fs::write(repo.path().join("A.md"), "a1\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "A.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("snapshot")
+        .assert()
+        .success();
+
+    fs::write(repo.path().join("B.md"), "b1\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "B.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("History:"))
+        .stdout(predicate::str::contains("Modified (1)"))
+        .stdout(predicate::str::contains("B.md"));
+}
+
+#[test]
+fn status_does_not_stage_shadow_changes() {
+    let repo = init_repo();
+    fs::write(repo.path().join("CLAUDE.md"), "v1\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("snapshot")
+        .assert()
+        .success();
+
+    fs::write(repo.path().join("CLAUDE.md"), "v2\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Modified (1)"))
+        .stdout(predicate::str::contains("CLAUDE.md"));
+
+    Command::new("git")
+        .args([
+            "--git-dir=.layer",
+            "--work-tree=.",
+            "diff",
+            "--cached",
+            "--name-only",
+            "HEAD",
+        ])
+        .current_dir(repo.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+}

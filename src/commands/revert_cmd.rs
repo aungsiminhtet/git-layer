@@ -1,4 +1,3 @@
-use crate::agent;
 use crate::exclude_file::normalize_entry;
 use crate::git;
 use crate::shadow::ShadowRepo;
@@ -29,13 +28,11 @@ pub fn run(file: String, to: usize) -> Result<i32> {
         .shadow_git(&["cat-file", "-e", &file_ref])
         .map_err(|_| anyhow!("'{normalized}' not found at {rev}"))?;
 
-    let agent = agent::detect_agent();
     if ctx.root.join(&normalized).exists() {
         let current_files = vec![normalized.clone()];
         let _ = shadow.track_files(&current_files);
         let _ = shadow.snapshot_paths(
             &format!("auto: before revert of {normalized}"),
-            &agent,
             &current_files,
         );
     }
@@ -52,11 +49,7 @@ pub fn run(file: String, to: usize) -> Result<i32> {
 
     let restored_files = vec![normalized.clone()];
     shadow.track_files(&restored_files)?;
-    if !shadow.snapshot_paths(
-        &format!("revert: {normalized} to {rev}"),
-        &agent,
-        &restored_files,
-    )? {
+    if !shadow.snapshot_paths(&format!("revert: {normalized} to {rev}"), &restored_files)? {
         println!("  {} '{}' already matches {}", ui::ok(), normalized, rev);
         return Ok(2);
     }

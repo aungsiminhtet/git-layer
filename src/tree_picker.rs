@@ -72,7 +72,6 @@ pub fn run(nodes: &[TreeNode]) -> io::Result<Option<Vec<String>>> {
     let mut scroll: usize = 0;
     let mut drawn: usize = 0;
 
-    // Pre-compute max display width across ALL possible items for stable columns.
     let max_display_width = compute_max_display_width(nodes, 0);
 
     loop {
@@ -81,16 +80,13 @@ pub fn run(nodes: &[TreeNode]) -> io::Result<Option<Vec<String>>> {
             return Ok(Some(Vec::new()));
         }
 
-        // Clamp cursor.
         if cursor >= items.len() {
             cursor = items.len().saturating_sub(1);
         }
 
-        // Compute viewport.
         let term_height = term.size().0 as usize;
         let viewport = items.len().min(term_height.saturating_sub(2).max(3));
 
-        // Adjust scroll to keep cursor visible.
         if cursor < scroll {
             scroll = cursor;
         }
@@ -101,10 +97,8 @@ pub fn run(nodes: &[TreeNode]) -> io::Result<Option<Vec<String>>> {
             scroll = items.len().saturating_sub(viewport);
         }
 
-        // Clear previous frame.
         clear_last_lines(&term, drawn);
 
-        // Render visible rows.
         drawn = 0;
         for (i, item) in items.iter().enumerate().skip(scroll).take(viewport) {
             let is_active = i == cursor;
@@ -114,7 +108,6 @@ pub fn run(nodes: &[TreeNode]) -> io::Result<Option<Vec<String>>> {
             drawn += 1;
         }
 
-        // Read key.
         let key = term.read_key()?;
         match key {
             Key::ArrowUp => {
@@ -143,42 +136,37 @@ pub fn run(nodes: &[TreeNode]) -> io::Result<Option<Vec<String>>> {
                     expanded.insert(dir_path.clone());
                 }
             }
-            Key::ArrowLeft => {
-                match &items[cursor] {
-                    FlatItem::Dir {
-                        dir_path,
-                        expanded: true,
-                        ..
-                    } => {
-                        // Collapse this directory.
-                        expanded.remove(dir_path.as_str());
-                    }
-                    FlatItem::Dir {
-                        parent_dir: Some(parent),
-                        expanded: false,
-                        ..
-                    } => {
-                        // Already collapsed — collapse parent and jump to it.
-                        let parent = parent.clone();
-                        expanded.remove(parent.as_str());
-                        if let Some(idx) = find_dir_index(&items, &parent) {
-                            cursor = idx;
-                        }
-                    }
-                    FlatItem::File {
-                        parent_dir: Some(parent),
-                        ..
-                    } => {
-                        // Collapse parent directory and jump to it.
-                        let parent = parent.clone();
-                        expanded.remove(parent.as_str());
-                        if let Some(idx) = find_dir_index(&items, &parent) {
-                            cursor = idx;
-                        }
-                    }
-                    _ => {}
+            Key::ArrowLeft => match &items[cursor] {
+                FlatItem::Dir {
+                    dir_path,
+                    expanded: true,
+                    ..
+                } => {
+                    expanded.remove(dir_path.as_str());
                 }
-            }
+                FlatItem::Dir {
+                    parent_dir: Some(parent),
+                    expanded: false,
+                    ..
+                } => {
+                    let parent = parent.clone();
+                    expanded.remove(parent.as_str());
+                    if let Some(idx) = find_dir_index(&items, &parent) {
+                        cursor = idx;
+                    }
+                }
+                FlatItem::File {
+                    parent_dir: Some(parent),
+                    ..
+                } => {
+                    let parent = parent.clone();
+                    expanded.remove(parent.as_str());
+                    if let Some(idx) = find_dir_index(&items, &parent) {
+                        cursor = idx;
+                    }
+                }
+                _ => {}
+            },
             Key::Enter => {
                 clear_last_lines(&term, drawn);
                 let result = collect_selected(nodes, &selected);
@@ -237,7 +225,6 @@ fn flatten_recursive(
 fn compute_max_display_width(nodes: &[TreeNode], depth: usize) -> usize {
     let mut max = 0;
     for node in nodes {
-        // Total width before category: prefix(2*(depth+1)) + check+space(2) + path.len()
         let width = 2 * (depth + 1) + 2 + node.path.len();
         max = max.max(width);
         if !node.children.is_empty() {
@@ -282,7 +269,6 @@ fn format_row(
         }
     };
 
-    // Compute padding so category text aligns across all items.
     let current_width = 2 * (depth + 1) + 2 + display_path.len();
     let padding = max_display_width.saturating_sub(current_width);
 
@@ -328,15 +314,12 @@ fn collect_selected_recursive(
 ) {
     for node in nodes {
         if node.children.is_empty() {
-            // Leaf file.
             if selected.contains(&node.path) {
                 result.push(node.path.clone());
             }
         } else if selected.contains(&node.path) {
-            // Directory selected — add it, skip descendants (dedup).
             result.push(node.path.clone());
         } else {
-            // Directory not selected — recurse into children.
             collect_selected_recursive(&node.children, selected, result);
         }
     }

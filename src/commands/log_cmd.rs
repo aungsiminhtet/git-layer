@@ -13,9 +13,9 @@ pub fn run(file: Option<String>, count: Option<usize>) -> Result<i32> {
     })?;
 
     let format_arg = if ui::is_stdout_tty() {
-        "--format=%C(cyan)%h%Creset %s %C(dim)(%ar by %an)%Creset"
+        "--format=%C(cyan)%h%Creset %s %C(dim)(%cr)%Creset"
     } else {
-        "--format=%h %s (%ar by %an)"
+        "--format=%h %s (%cr)"
     };
 
     let mut args = vec!["log", format_arg];

@@ -58,11 +58,10 @@ pub fn run() -> Result<i32> {
     let mut history_info = None;
     let mut modified_files = Vec::new();
     if let Some(shadow) = ShadowRepo::open(&ctx.root) {
-        if let Ok(files) = crate::shadow::resolve_history_files(&ctx, &entries, Some(&shadow)) {
-            let _ = shadow.track_files(&files);
-        }
         history_info = shadow.last_snapshot_info().ok().flatten();
-        modified_files = shadow.changed_files().unwrap_or_default();
+        if let Ok(files) = crate::shadow::resolve_history_files(&ctx, &entries, Some(&shadow)) {
+            modified_files = shadow.pending_snapshot_files(&files).unwrap_or_default();
+        }
     }
 
     if disabled.is_empty()
@@ -121,7 +120,6 @@ pub fn run() -> Result<i32> {
         has_section = true;
     }
 
-    // Layered section — dim, these are fine
     if !layered.is_empty() {
         println!("  {} Layered ({}):", ui::layered(), layered.len());
         for entry in &layered {
@@ -130,7 +128,6 @@ pub fn run() -> Result<i32> {
         has_section = true;
     }
 
-    // Disabled section — temporarily turned off entries
     if !disabled.is_empty() {
         if has_section {
             println!();
@@ -142,7 +139,6 @@ pub fn run() -> Result<i32> {
         has_section = true;
     }
 
-    // Exposed section — excluded entries that are still tracked
     if !exposed.is_empty() {
         if has_section {
             println!();
@@ -151,7 +147,6 @@ pub fn run() -> Result<i32> {
         has_section = true;
     }
 
-    // Discovered section — context files not yet layered
     if !discovered.is_empty() {
         if has_section {
             println!();
@@ -173,7 +168,6 @@ pub fn run() -> Result<i32> {
         has_section = true;
     }
 
-    // Tracked context files — exposed because they're tracked
     if !tracked_ctx.is_empty() {
         if has_section {
             println!();

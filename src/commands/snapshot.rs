@@ -1,4 +1,3 @@
-use crate::agent;
 use crate::exclude_file::ensure_exclude_file;
 use crate::git;
 use crate::shadow::{self, ShadowRepo};
@@ -44,7 +43,6 @@ pub fn run(files: Vec<String>, message: Option<String>) -> Result<i32> {
         Some(shadow) => shadow,
         None => ShadowRepo::init(&ctx.root)?,
     };
-    let agent = agent::detect_agent();
 
     shadow.track_files(&target_files)?;
 
@@ -52,16 +50,15 @@ pub fn run(files: Vec<String>, message: Option<String>) -> Result<i32> {
         if target_files.len() <= 3 {
             format!("snapshot: {}", target_files.join(", "))
         } else {
-            format!("snapshot by {}", agent.name)
+            format!("snapshot: {} files", target_files.len())
         }
     });
 
-    if shadow.snapshot_paths(&msg, &agent, &target_files)? {
+    if shadow.snapshot_paths(&msg, &target_files)? {
         println!(
-            "  {} Snapshot created ({} files by {})",
+            "  {} Snapshot created ({} files)",
             ui::ok(),
-            target_files.len(),
-            agent.name
+            target_files.len()
         );
         Ok(0)
     } else {

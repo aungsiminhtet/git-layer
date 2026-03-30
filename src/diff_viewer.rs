@@ -1,4 +1,4 @@
-use crate::shadow::ShadowRepo;
+use crate::shadow::{ShadowRepo, SHADOW_INIT_MESSAGE};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind,
 };
@@ -10,6 +10,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph};
 use ratatui::Terminal;
 use std::io;
+use unicode_truncate::UnicodeTruncateStr;
+use unicode_width::UnicodeWidthStr;
 
 struct TerminalGuard;
 
@@ -41,6 +43,8 @@ struct DiffViewer {
     files: Vec<String>,
     file_state: ListState,
     diff_lines: Vec<DiffLine>,
+    wrapped_diff_lines: Vec<Line<'static>>,
+    wrapped_diff_width: usize,
     diff_scroll: usize,
 }
 
@@ -52,7 +56,6 @@ const ACCENT_BG: Color = Color::Rgb(8, 47, 73);
 const BORDER: Color = Color::Rgb(51, 65, 85);
 const ADDED: Color = Color::Rgb(74, 222, 128);
 const REMOVED: Color = Color::Rgb(248, 113, 113);
-
 impl DiffViewer {
     fn new(shadow: &ShadowRepo) -> Self {
         let snapshots = load_snapshots(shadow);
@@ -62,6 +65,8 @@ impl DiffViewer {
             files: Vec::new(),
             file_state: ListState::default(),
             diff_lines: Vec::new(),
+            wrapped_diff_lines: Vec::new(),
+            wrapped_diff_width: 0,
             diff_scroll: 0,
         };
         viewer.refresh_files(shadow);
@@ -89,11 +94,30 @@ impl DiffViewer {
         let (base, target) = self.snapshot_range();
         if let Some(idx) = self.file_state.selected() {
             if let Some(file) = self.files.get(idx) {
-                self.diff_lines = get_file_diff(shadow, &base, &target, file);
+                self.set_diff_lines(get_file_diff(shadow, &base, &target, file));
                 return;
             }
         }
-        self.diff_lines = Vec::new();
+        self.set_diff_lines(Vec::new());
+    }
+
+    fn set_diff_lines(&mut self, diff_lines: Vec<DiffLine>) {
+        self.diff_lines = diff_lines;
+        self.wrapped_diff_lines.clear();
+        self.wrapped_diff_width = 0;
+    }
+
+    fn ensure_wrapped_diff_lines(&mut self, visible_width: usize) {
+        if self.wrapped_diff_width == visible_width {
+            return;
+        }
+
+        self.wrapped_diff_lines = wrap_diff_lines(&self.diff_lines, visible_width);
+        self.wrapped_diff_width = visible_width;
+    }
+
+    fn max_vertical_scroll(&self, visible_height: usize) -> usize {
+        self.wrapped_diff_lines.len().saturating_sub(visible_height)
     }
 
     fn snapshot_range(&self) -> (String, String) {
@@ -160,9 +184,8 @@ impl DiffViewer {
         self.diff_scroll = self.diff_scroll.saturating_sub(1);
     }
 
-    fn scroll_down(&mut self, visible_height: usize) {
-        let max = self.diff_lines.len().saturating_sub(visible_height);
-        if self.diff_scroll < max {
+    fn scroll_down(&mut self, max_scroll: usize) {
+        if self.diff_scroll < max_scroll {
             self.diff_scroll += 1;
         }
     }
@@ -172,10 +195,9 @@ impl DiffViewer {
         self.diff_scroll = self.diff_scroll.saturating_sub(half);
     }
 
-    fn half_page_down(&mut self, visible_height: usize) {
+    fn half_page_down(&mut self, visible_height: usize, max_scroll: usize) {
         let half = visible_height / 2;
-        let max = self.diff_lines.len().saturating_sub(visible_height);
-        self.diff_scroll = (self.diff_scroll + half).min(max);
+        self.diff_scroll = (self.diff_scroll + half).min(max_scroll);
     }
 }
 
@@ -191,6 +213,7 @@ pub fn run_interactive(shadow: &ShadowRepo) -> anyhow::Result<()> {
 
     let mut viewer = DiffViewer::new(shadow);
     let mut diff_area_height: usize = 20;
+    let mut diff_max_scroll: usize = 0;
 
     loop {
         terminal.draw(|frame| {
@@ -210,7 +233,7 @@ pub fn run_interactive(shadow: &ShadowRepo) -> anyhow::Result<()> {
             let cols = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Length(26),
+                    Constraint::Length(file_list_width(rows[1].width, &viewer)),
                     Constraint::Length(1),
                     Constraint::Min(40),
                 ])
@@ -218,7 +241,7 @@ pub fn run_interactive(shadow: &ShadowRepo) -> anyhow::Result<()> {
 
             render_file_list(frame, cols[0], &mut viewer);
             render_divider(frame, cols[1]);
-            diff_area_height = render_diff(frame, cols[2], &viewer);
+            (diff_area_height, diff_max_scroll) = render_diff(frame, cols[2], &mut viewer);
             render_footer(frame, rows[2]);
         })?;
 
@@ -230,7 +253,7 @@ pub fn run_interactive(shadow: &ShadowRepo) -> anyhow::Result<()> {
                         viewer.scroll_up();
                     }
                     (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
-                        viewer.scroll_down(diff_area_height);
+                        viewer.scroll_down(diff_max_scroll);
                     }
                     (KeyCode::Tab, KeyModifiers::NONE) => {
                         viewer.select_next_file(shadow);
@@ -246,19 +269,19 @@ pub fn run_interactive(shadow: &ShadowRepo) -> anyhow::Result<()> {
                     }
                     (KeyCode::Char('w'), KeyModifiers::NONE) => viewer.scroll_up(),
                     (KeyCode::Char('s'), KeyModifiers::NONE) => {
-                        viewer.scroll_down(diff_area_height);
+                        viewer.scroll_down(diff_max_scroll);
                     }
                     (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
                         viewer.half_page_up(diff_area_height);
                     }
                     (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-                        viewer.half_page_down(diff_area_height);
+                        viewer.half_page_down(diff_area_height, diff_max_scroll);
                     }
                     _ => {}
                 },
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollUp => viewer.scroll_up(),
-                    MouseEventKind::ScrollDown => viewer.scroll_down(diff_area_height),
+                    MouseEventKind::ScrollDown => viewer.scroll_down(diff_max_scroll),
                     _ => {}
                 },
                 _ => {}
@@ -404,7 +427,7 @@ fn render_file_list(frame: &mut ratatui::Frame, area: Rect, viewer: &mut DiffVie
     frame.render_stateful_widget(list, rows[1], &mut viewer.file_state);
 }
 
-fn render_diff(frame: &mut ratatui::Frame, area: Rect, viewer: &DiffViewer) -> usize {
+fn render_diff(frame: &mut ratatui::Frame, area: Rect, viewer: &mut DiffViewer) -> (usize, usize) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -436,19 +459,22 @@ fn render_diff(frame: &mut ratatui::Frame, area: Rect, viewer: &DiffViewer) -> u
             .style(Style::default().fg(DIM))
             .alignment(Alignment::Left);
         frame.render_widget(empty, rows[2]);
-        return inner_height;
+        return (inner_height, 0);
     }
 
+    viewer.ensure_wrapped_diff_lines(rows[2].width as usize);
+    let max_scroll = viewer.max_vertical_scroll(inner_height);
+    viewer.diff_scroll = viewer.diff_scroll.min(max_scroll);
     let visible: Vec<Line> = viewer
-        .diff_lines
+        .wrapped_diff_lines
         .iter()
         .skip(viewer.diff_scroll)
         .take(inner_height)
-        .map(render_diff_line)
+        .cloned()
         .collect();
 
     frame.render_widget(Paragraph::new(visible), rows[2]);
-    inner_height
+    (inner_height, max_scroll)
 }
 
 fn render_footer(frame: &mut ratatui::Frame, area: Rect) {
@@ -475,26 +501,106 @@ fn render_divider(frame: &mut ratatui::Frame, area: Rect) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn render_diff_line(line: &DiffLine) -> Line<'static> {
-    match line {
-        DiffLine::Added(text) => styled_diff_line(text, ADDED),
-        DiffLine::Removed(text) => styled_diff_line(text, REMOVED),
-        DiffLine::Context(text) => Line::from(Span::styled(text.clone(), Style::default().fg(DIM))),
-    }
+fn split_prefix(text: &str) -> Option<(char, &str)> {
+    let prefix = text.chars().next()?;
+    Some((prefix, &text[prefix.len_utf8()..]))
 }
 
-fn styled_diff_line(text: &str, color: Color) -> Line<'static> {
-    if let Some((prefix, rest)) = text.chars().next().map(|prefix| (prefix, &text[1..])) {
-        Line::from(vec![
-            Span::styled(
-                prefix.to_string(),
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(rest.to_string(), Style::default().fg(color)),
-        ])
-    } else {
-        Line::default()
+fn wrap_diff_lines(diff_lines: &[DiffLine], visible_width: usize) -> Vec<Line<'static>> {
+    let body_width = visible_width.saturating_sub(1);
+    let mut wrapped = Vec::new();
+
+    for line in diff_lines {
+        let (text, color, bold_prefix) = match line {
+            DiffLine::Added(text) => (text.as_str(), ADDED, true),
+            DiffLine::Removed(text) => (text.as_str(), REMOVED, true),
+            DiffLine::Context(text) => (text.as_str(), DIM, false),
+        };
+
+        wrapped.extend(wrap_diff_line(text, color, body_width, bold_prefix));
     }
+
+    wrapped
+}
+
+fn wrap_diff_line(
+    text: &str,
+    color: Color,
+    body_width: usize,
+    bold_prefix: bool,
+) -> Vec<Line<'static>> {
+    let Some((prefix, rest)) = split_prefix(text) else {
+        return vec![Line::default()];
+    };
+
+    let mut prefix_style = Style::default().fg(color);
+    if bold_prefix {
+        prefix_style = prefix_style.add_modifier(Modifier::BOLD);
+    }
+    let body_style = Style::default().fg(color);
+
+    if body_width == 0 {
+        return vec![Line::from(vec![Span::styled(
+            prefix.to_string(),
+            prefix_style,
+        )])];
+    }
+
+    if rest.is_empty() {
+        return vec![Line::from(vec![
+            Span::styled(prefix.to_string(), prefix_style),
+            Span::styled(String::new(), body_style),
+        ])];
+    }
+
+    let mut wrapped = Vec::new();
+    let mut remaining = rest;
+    let mut current_prefix = prefix;
+    let mut current_prefix_style = prefix_style;
+
+    loop {
+        let (segment, _) = remaining.unicode_truncate(body_width);
+        if segment.is_empty() {
+            break;
+        }
+
+        wrapped.push(Line::from(vec![
+            Span::styled(current_prefix.to_string(), current_prefix_style),
+            Span::styled(segment.to_string(), body_style),
+        ]));
+
+        if segment.len() == remaining.len() {
+            break;
+        }
+
+        remaining = &remaining[segment.len()..];
+        current_prefix = ' ';
+        current_prefix_style = body_style;
+    }
+
+    if wrapped.is_empty() {
+        wrapped.push(Line::from(vec![Span::styled(
+            prefix.to_string(),
+            prefix_style,
+        )]));
+    }
+
+    wrapped
+}
+
+fn file_list_width(total_width: u16, viewer: &DiffViewer) -> u16 {
+    let longest = viewer
+        .files
+        .iter()
+        .map(|file| file.width())
+        .max()
+        .unwrap_or(0)
+        .max("No changed files".width());
+
+    let desired = (longest + 4).clamp(16, 36) as u16;
+    let max_width = total_width.saturating_sub(42).max(12);
+
+    desired.min(max_width)
 }
 
 fn compact_age(age: &str) -> String {
@@ -555,39 +661,16 @@ fn prev_wrapped_index(len: usize, selected: Option<usize>) -> Option<usize> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{next_wrapped_index, prev_wrapped_index};
-
-    #[test]
-    fn next_wrapped_index_loops_to_start() {
-        assert_eq!(next_wrapped_index(3, Some(0)), Some(1));
-        assert_eq!(next_wrapped_index(3, Some(1)), Some(2));
-        assert_eq!(next_wrapped_index(3, Some(2)), Some(0));
-    }
-
-    #[test]
-    fn prev_wrapped_index_loops_to_end() {
-        assert_eq!(prev_wrapped_index(3, Some(2)), Some(1));
-        assert_eq!(prev_wrapped_index(3, Some(1)), Some(0));
-        assert_eq!(prev_wrapped_index(3, Some(0)), Some(2));
-    }
-
-    #[test]
-    fn wrapped_index_handles_empty_or_unselected_state() {
-        assert_eq!(next_wrapped_index(0, None), None);
-        assert_eq!(prev_wrapped_index(0, None), None);
-        assert_eq!(next_wrapped_index(3, None), Some(0));
-        assert_eq!(prev_wrapped_index(3, None), Some(2));
-    }
-}
-
 fn load_snapshots(shadow: &ShadowRepo) -> Vec<SnapshotInfo> {
     let output = shadow
-        .shadow_git(&["log", "--format=%h|%s|%ar", "--skip=1"])
+        .shadow_git(&["log", "--format=%h|%s|%cr"])
         .unwrap_or_default();
 
-    output
+    parse_snapshot_log(&output)
+}
+
+fn parse_snapshot_log(output: &str) -> Vec<SnapshotInfo> {
+    let mut snapshots: Vec<SnapshotInfo> = output
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|line| {
@@ -602,7 +685,17 @@ fn load_snapshots(shadow: &ShadowRepo) -> Vec<SnapshotInfo> {
                 None
             }
         })
-        .collect()
+        .collect();
+
+    if snapshots
+        .last()
+        .map(|snapshot| snapshot.message == SHADOW_INIT_MESSAGE)
+        .unwrap_or(false)
+    {
+        snapshots.pop();
+    }
+
+    snapshots
 }
 
 fn get_changed_files(shadow: &ShadowRepo, base: &str, target: &str) -> Vec<String> {
@@ -649,4 +742,73 @@ fn parse_diff(raw: &str) -> Vec<DiffLine> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        next_wrapped_index, parse_snapshot_log, prev_wrapped_index, wrap_diff_line, ADDED,
+    };
+
+    #[test]
+    fn next_wrapped_index_loops_to_start() {
+        assert_eq!(next_wrapped_index(3, Some(0)), Some(1));
+        assert_eq!(next_wrapped_index(3, Some(1)), Some(2));
+        assert_eq!(next_wrapped_index(3, Some(2)), Some(0));
+    }
+
+    #[test]
+    fn prev_wrapped_index_loops_to_end() {
+        assert_eq!(prev_wrapped_index(3, Some(2)), Some(1));
+        assert_eq!(prev_wrapped_index(3, Some(1)), Some(0));
+        assert_eq!(prev_wrapped_index(3, Some(0)), Some(2));
+    }
+
+    #[test]
+    fn wrapped_index_handles_empty_or_unselected_state() {
+        assert_eq!(next_wrapped_index(0, None), None);
+        assert_eq!(prev_wrapped_index(0, None), None);
+        assert_eq!(next_wrapped_index(3, None), Some(0));
+        assert_eq!(prev_wrapped_index(3, None), Some(2));
+    }
+
+    #[test]
+    fn parse_snapshot_log_drops_init_commit_but_keeps_latest_snapshot() {
+        let raw = "\
+abc1234|snapshot: 3 files|2 minutes ago
+def5678|snapshot: CLAUDE.md|2 days ago
+fedcba9|layer: init history tracking|2 days ago
+";
+
+        let snapshots = parse_snapshot_log(raw);
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].hash, "abc1234");
+        assert_eq!(snapshots[0].time, "2 minutes ago");
+        assert_eq!(snapshots[1].hash, "def5678");
+    }
+
+    #[test]
+    fn wrap_diff_line_splits_long_content_into_continuation_rows() {
+        let wrapped = wrap_diff_line("+abcdefghijklmnopqrstuvwxyz", ADDED, 8, true);
+        assert_eq!(wrapped.len(), 4);
+        assert_eq!(wrapped[0].spans[0].content.as_ref(), "+");
+        assert_eq!(wrapped[0].spans[1].content.as_ref(), "abcdefgh");
+        assert_eq!(wrapped[1].spans[0].content.as_ref(), " ");
+    }
+
+    #[test]
+    fn wrap_diff_line_respects_combining_graphemes() {
+        let wrapped = wrap_diff_line("+y\u{0306}es", ADDED, 2, true);
+        assert_eq!(wrapped.len(), 2);
+        assert_eq!(wrapped[0].spans[1].content.as_ref(), "y\u{0306}e");
+        assert_eq!(wrapped[1].spans[1].content.as_ref(), "s");
+    }
+
+    #[test]
+    fn wrap_diff_line_respects_wide_graphemes() {
+        let wrapped = wrap_diff_line("+你好吗", ADDED, 4, true);
+        assert_eq!(wrapped.len(), 2);
+        assert_eq!(wrapped[0].spans[1].content.as_ref(), "你好");
+        assert_eq!(wrapped[1].spans[1].content.as_ref(), "吗");
+    }
 }

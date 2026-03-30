@@ -1,4 +1,3 @@
-mod agent;
 mod commands;
 mod diff_viewer;
 mod exclude_file;
@@ -64,7 +63,7 @@ enum Commands {
     Log(LogArgs),
     /// Show changes since last snapshot
     Diff(DiffArgs),
-    /// Show per-line agent attribution for a layered file
+    /// Show per-line snapshot history for a layered file
     Blame(BlameArgs),
     /// Restore a layered file from history
     Revert(RevertArgs),

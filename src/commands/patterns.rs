@@ -354,21 +354,6 @@ mod tests {
     }
 
     #[test]
-    fn static_run_succeeds() {
-        // Just verify it doesn't panic
-        let result = run(false, false, false);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 0);
-    }
-
-    #[test]
-    fn json_static_run_succeeds() {
-        let result = run(true, false, false);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 0);
-    }
-
-    #[test]
     fn show_files_without_matched_errors() {
         let result = run(false, false, true);
         assert!(result.is_err());

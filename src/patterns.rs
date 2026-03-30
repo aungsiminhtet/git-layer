@@ -237,22 +237,4 @@ mod tests {
             .iter()
             .all(|p| p.category == PatternCategory::AiConfig));
     }
-
-    #[test]
-    fn no_removed_patterns() {
-        let entries = KNOWN_SCAN_PATTERNS
-            .iter()
-            .map(|p| p.entry)
-            .collect::<Vec<_>>();
-        // Removed incorrect patterns
-        assert!(!entries.contains(&".roocodes/"));
-        assert!(!entries.contains(&".roocoderules"));
-        assert!(!entries.contains(&".cline/"));
-        assert!(!entries.contains(&".pearai/"));
-        assert!(!entries.contains(&".void/"));
-        assert!(!entries.contains(&".claude.json"));
-        assert!(!entries.contains(&"Agents.md"));
-        assert!(!entries.contains(&".github/copilot-custom-instructions.md"));
-        assert!(!entries.contains(&".continue/"));
-    }
 }

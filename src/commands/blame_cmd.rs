@@ -1,4 +1,3 @@
-use crate::agent;
 use crate::exclude_file::{ensure_exclude_file, normalize_entry};
 use crate::git;
 use crate::shadow::{self, ShadowRepo};
@@ -29,8 +28,7 @@ pub fn run(file: String) -> Result<i32> {
 
     let current_file = vec![normalized.clone()];
     let _ = shadow.track_files(&current_file);
-    let agent = agent::detect_agent();
-    let _ = shadow.snapshot_paths("auto: snapshot for blame", &agent, &current_file);
+    let _ = shadow.snapshot_paths("auto: snapshot for blame", &current_file);
 
     let color_arg = if ui::is_stdout_tty() {
         "--color-by-age"
