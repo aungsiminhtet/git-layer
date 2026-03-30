@@ -23,7 +23,7 @@ cargo install git-layer
 layer scan                          # auto-detect AI context files and exclude them
 layer add                           # interactive tree picker
 layer add API_SPEC.md my-prompts/   # or add specific files
-layer status                        # see what's layered, exposed, and discovered
+layer status                        # see layering state plus snapshot history status
 ```
 
 That's it. The files disappear from `git status` and stay on disk.
@@ -47,10 +47,12 @@ Layered files are intentionally hidden from Git. That keeps them out of commits,
 ```bash
 layer snapshot                  # save current state of all layered files
 layer log                       # show change history
-layer diff                      # interactive diff viewer (TUI)
-layer blame CLAUDE.md           # show per-line history
+layer diff                      # interactive diff viewer (TUI in a terminal)
+layer blame CLAUDE.md           # show per-line snapshot history
 layer revert CLAUDE.md          # restore from previous snapshot
 ```
+
+Snapshots are explicit by default. `layer` only auto-snapshots for `blame` (freshness) and `revert` (safety net).
 
 `layer diff` opens an interactive terminal viewer for snapshot history and unsaved changes.
 
@@ -68,28 +70,28 @@ The shadow repo (`.layer/`) is local to your clone and initializes automatically
 | `layer rm [files...]`  | Remove entries (interactive if no args)            |
 | `layer ls`             | List all managed entries with status               |
 | `layer scan`           | Auto-detect known AI files and exclude them        |
-| `layer status`         | Summary of layered, exposed, and discovered files  |
+| `layer status`         | Summary of layering state plus snapshot status     |
 
 `layer scan` recognizes files from Claude Code, Cursor, Windsurf, Codex, Aider, Copilot, and many others. You can always add any file with `layer add <file>`.
 
 ### Visibility
 
-| Command                | Description                                   |
-| ---------------------- | --------------------------------------------- |
-| `layer off [files...]` | Temporarily un-hide entries                   |
-| `layer on [files...]`  | Re-hide disabled entries                      |
-| `layer why <file>`     | Explain why a file is or isn't ignored        |
-| `layer doctor`         | Find exposed, stale, and redundant entries    |
+| Command                | Description                                |
+| ---------------------- | ------------------------------------------ |
+| `layer off [files...]` | Temporarily un-hide entries                |
+| `layer on [files...]`  | Re-hide disabled entries                   |
+| `layer why <file>`     | Explain why a file is or isn't ignored     |
+| `layer doctor`         | Find exposed, stale, and redundant entries |
 
 ### History
 
-| Command              | Description                                        |
-| -------------------- | -------------------------------------------------- |
-| `layer snapshot`     | Save current state of layered files                |
-| `layer log [file]`   | Show change history                                |
-| `layer diff [file]`  | Show changes since last snapshot (TUI in terminal) |
-| `layer blame <file>` | Show per-line history                              |
-| `layer revert <file>` | Restore file from a previous snapshot             |
+| Command               | Description                            |
+| --------------------- | -------------------------------------- |
+| `layer snapshot`      | Save current state of layered files    |
+| `layer log [file]`    | Show snapshot history                  |
+| `layer diff [file]`   | Show snapshot diff and unsaved changes |
+| `layer blame <file>`  | Show per-line snapshot history         |
+| `layer revert <file>` | Restore file from a previous snapshot  |
 
 ### Maintenance
 
@@ -101,26 +103,28 @@ The shadow repo (`.layer/`) is local to your clone and initializes automatically
 
 ### Backup
 
-| Command         | Description                     |
-| --------------- | ------------------------------- |
-| `layer backup`  | Save entries to `~/.layer-backups/`  |
-| `layer restore` | Restore from a backup           |
+| Command         | Description                         |
+| --------------- | ----------------------------------- |
+| `layer backup`  | Save entries to `~/.layer-backups/` |
+| `layer restore` | Restore from a backup               |
 
 ### Global
 
-| Command            | Description                               |
-| ------------------ | ----------------------------------------- |
-| `layer global add` | Add to `~/.config/git/ignore` (all repos) |
-| `layer global ls`  | List global gitignore entries             |
-| `layer global rm`  | Remove global entries                     |
+`layer add` affects only the current repo. `layer global add` affects Git's global ignore file for all repos on this machine.
+
+| Command            | Description                              |
+| ------------------ | ---------------------------------------- |
+| `layer global add` | Add entries to Git's global ignore file  |
+| `layer global ls`  | List entries in Git's global ignore file |
+| `layer global rm`  | Remove global ignore entries             |
 
 ## How it works
 
-Git checks ignore rules in this order:
+Git combines ignore rules from several places:
 
-1. **`.git/info/exclude`** — local to this clone, never shared (this is what `layer` manages)
-2. `.gitignore` — tracked and shared with the team
-3. `~/.config/git/ignore` — global, applies to all repos
+1. `.gitignore` files in the repo — tracked and shared with the team
+2. **`.git/info/exclude`** — local to the repo on your machine, never shared (this is what `layer` manages by default)
+3. Git's global ignore file — applies to all repos on this machine. Its path comes from `git config --global core.excludesFile`; if unset, Git commonly uses `~/.config/git/ignore`.
 
 A file must be **untracked** for ignore rules to apply. If it's already tracked, `layer` will flag it as "exposed" and tell you how to fix it (`git rm --cached`).
 
@@ -136,8 +140,9 @@ A file must be **untracked** for ignore rules to apply. If it's already tracked,
 ```bash
 cargo check
 cargo test
-cargo clippy
+cargo clippy --all-targets
 cargo build --release
+cargo install --path . --force
 ```
 
 ## License
