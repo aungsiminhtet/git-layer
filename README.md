@@ -7,6 +7,9 @@ Developers drop personal context files into repos. `API_SPEC.md`, `BACKEND_GUIDE
 ## Install
 
 ```bash
+# Homebrew
+brew install aungsiminhtet/tap/git-layer
+
 # macOS / Linux
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aungsiminhtet/git-layer/releases/latest/download/git-layer-installer.sh | sh
 
