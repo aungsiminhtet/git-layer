@@ -2,6 +2,7 @@ use crate::commands::add;
 use crate::exclude_file::{ensure_exclude_file_for_write, normalize_entry};
 use crate::git;
 use crate::git::RepoContext;
+use crate::matching::wildcard_match;
 use crate::patterns::{PatternCategory, KNOWN_SCAN_PATTERNS};
 use crate::ui;
 use anyhow::{anyhow, Result};
@@ -360,74 +361,4 @@ fn pattern_matches_path(pattern: &str, item: &DiscoveredPath) -> bool {
     }
 
     item.match_path.rsplit('/').next().unwrap_or("") == pattern_trimmed
-}
-
-fn wildcard_match(pattern: &str, text: &str) -> bool {
-    let p = pattern.as_bytes();
-    let t = text.as_bytes();
-    let (mut pi, mut ti) = (0usize, 0usize);
-    let mut star_idx = None;
-    let mut match_idx = 0usize;
-
-    while ti < t.len() {
-        if pi < p.len() && (p[pi] == b'?' || p[pi] == t[ti]) {
-            pi += 1;
-            ti += 1;
-        } else if pi < p.len() && p[pi] == b'*' {
-            star_idx = Some(pi);
-            pi += 1;
-            match_idx = ti;
-        } else if let Some(star) = star_idx {
-            pi = star + 1;
-            match_idx += 1;
-            ti = match_idx;
-        } else {
-            return false;
-        }
-    }
-
-    while pi < p.len() && p[pi] == b'*' {
-        pi += 1;
-    }
-
-    pi == p.len()
-}
-
-// Simple wildcard matcher for scanning known patterns against discovered paths.
-// This intentionally doesn't delegate to git check-ignore because the patterns
-// are controlled by us (KNOWN_SCAN_PATTERNS), not user input, and are simple
-// enough that this matcher handles them correctly.
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn wildcard_exact_match() {
-        assert!(wildcard_match("CLAUDE.md", "CLAUDE.md"));
-        assert!(!wildcard_match("CLAUDE.md", "claude.md"));
-    }
-
-    #[test]
-    fn wildcard_star() {
-        assert!(wildcard_match(".aider*", ".aider"));
-        assert!(wildcard_match(".aider*", ".aider.conf.yml"));
-        assert!(wildcard_match(".env.*", ".env.local"));
-        assert!(wildcard_match(".env.*", ".env.production"));
-        assert!(!wildcard_match(".env.*", ".env"));
-    }
-
-    #[test]
-    fn wildcard_question_mark() {
-        assert!(wildcard_match("file?.txt", "file1.txt"));
-        assert!(!wildcard_match("file?.txt", "file12.txt"));
-    }
-
-    #[test]
-    fn wildcard_empty_strings() {
-        assert!(wildcard_match("", ""));
-        assert!(!wildcard_match("a", ""));
-        assert!(wildcard_match("*", ""));
-        assert!(wildcard_match("*", "anything"));
-    }
 }

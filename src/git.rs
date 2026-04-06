@@ -48,6 +48,11 @@ fn resolve_git_dir(root: &Path, git_dir_raw: &str) -> PathBuf {
 }
 
 pub fn git_stdout(args: &[&str], cwd: Option<&Path>) -> Result<String> {
+    let output = git_stdout_bytes(args, cwd)?;
+    String::from_utf8(output).context("git output was not UTF-8")
+}
+
+pub fn git_stdout_bytes(args: &[&str], cwd: Option<&Path>) -> Result<Vec<u8>> {
     let mut cmd = Command::new("git");
     cmd.args(args);
     if let Some(cwd) = cwd {
@@ -66,7 +71,17 @@ pub fn git_stdout(args: &[&str], cwd: Option<&Path>) -> Result<String> {
         ));
     }
 
-    String::from_utf8(output.stdout).context("git output was not UTF-8")
+    Ok(output.stdout)
+}
+
+pub fn git_path(repo_root: &Path, target: &str) -> Result<PathBuf> {
+    let raw = git_stdout(&["rev-parse", "--git-path", target], Some(repo_root))?;
+    let path = PathBuf::from(raw.trim());
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(repo_root.join(path))
+    }
 }
 
 pub fn is_tracked(repo_root: &Path, file: &str) -> Result<bool> {

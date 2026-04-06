@@ -2,6 +2,8 @@ mod commands;
 mod diff_viewer;
 mod exclude_file;
 mod git;
+mod guard;
+mod matching;
 mod patterns;
 mod shadow;
 mod tree_picker;
@@ -57,6 +59,8 @@ enum Commands {
     Why(WhyArgs),
     /// Open .git/info/exclude in your editor
     Edit,
+    /// Protect commits with a pre-commit hook
+    Guard(GuardArgs),
     /// Create a snapshot of all layered files
     Snapshot(SnapshotArgs),
     /// Show change history for layered files
@@ -183,6 +187,22 @@ struct WhyArgs {
 }
 
 #[derive(Args, Debug)]
+struct GuardArgs {
+    /// Remove the installed pre-commit hook
+    #[arg(long)]
+    remove: bool,
+    /// Show guard installation status
+    #[arg(long)]
+    status: bool,
+    /// Internal hook check mode
+    #[arg(long, hide = true)]
+    check: bool,
+    /// Overwrite an existing foreign pre-commit hook
+    #[arg(long)]
+    force: bool,
+}
+
+#[derive(Args, Debug)]
 struct SnapshotArgs {
     /// Files to snapshot (all if omitted)
     files: Vec<String>,
@@ -245,6 +265,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
         },
         Some(Commands::Why(args)) => commands::why_cmd::run(args.file, args.verbose),
         Some(Commands::Edit) => commands::edit::run(),
+        Some(Commands::Guard(args)) => commands::guard::run(args),
         Some(Commands::Snapshot(args)) => commands::snapshot::run(args.files, args.message),
         Some(Commands::Log(args)) => commands::log_cmd::run(args.file, args.count),
         Some(Commands::Diff(args)) => commands::diff_cmd::run(args.file),
@@ -271,10 +292,15 @@ fn main() {
             _ => e.exit(),
         },
     };
-    println!();
+    let should_frame = !matches!(cli.command.as_ref(), Some(Commands::Guard(args)) if args.check);
+    if should_frame {
+        println!();
+    }
     let code = match dispatch(cli) {
         Ok(code) => {
-            println!();
+            if should_frame {
+                println!();
+            }
             code
         }
         Err(err) => {

@@ -1,5 +1,6 @@
 use crate::exclude_file::Entry;
 use crate::git::{self, RepoContext};
+use crate::matching::wildcard_match;
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -312,31 +313,6 @@ fn entry_matches_file(entry: &str, path: &str) -> bool {
     path == entry
 }
 
-fn wildcard_match(pattern: &str, text: &str) -> bool {
-    let p: Vec<char> = pattern.chars().collect();
-    let t: Vec<char> = text.chars().collect();
-    let mut dp = vec![vec![false; t.len() + 1]; p.len() + 1];
-    dp[0][0] = true;
-
-    for i in 1..=p.len() {
-        if p[i - 1] == '*' {
-            dp[i][0] = dp[i - 1][0];
-        }
-    }
-
-    for i in 1..=p.len() {
-        for j in 1..=t.len() {
-            if p[i - 1] == '*' {
-                dp[i][j] = dp[i - 1][j] || dp[i][j - 1];
-            } else if p[i - 1] == '?' || p[i - 1] == t[j - 1] {
-                dp[i][j] = dp[i - 1][j - 1];
-            }
-        }
-    }
-
-    dp[p.len()][t.len()]
-}
-
 fn git_stdout_simple(args: &[&str]) -> Result<String> {
     let output = Command::new("git")
         .args(args)
@@ -349,35 +325,4 @@ fn git_stdout_simple(args: &[&str]) -> Result<String> {
     }
 
     String::from_utf8(output.stdout).context("git output was not UTF-8")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn wildcard_match_literal() {
-        assert!(wildcard_match("CLAUDE.md", "CLAUDE.md"));
-        assert!(!wildcard_match("CLAUDE.md", "AGENTS.md"));
-    }
-
-    #[test]
-    fn wildcard_match_star() {
-        assert!(wildcard_match("*.md", "CLAUDE.md"));
-        assert!(wildcard_match("*.md", "README.md"));
-        assert!(!wildcard_match("*.md", "file.txt"));
-    }
-
-    #[test]
-    fn wildcard_match_question() {
-        assert!(wildcard_match("file?.txt", "file1.txt"));
-        assert!(!wildcard_match("file?.txt", "file12.txt"));
-    }
-
-    #[test]
-    fn wildcard_match_complex() {
-        assert!(wildcard_match(".aider*", ".aiderignore"));
-        assert!(wildcard_match(".aider*", ".aider.conf.yml"));
-        assert!(wildcard_match(".env.*", ".env.local"));
-    }
 }

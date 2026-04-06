@@ -41,6 +41,16 @@ layer off CLAUDE.md    # or just one file
 layer on               # re-hide before committing
 ```
 
+### Commit guard
+
+`layer off` makes those files visible to Git again. That means `git add`, `git add .`, or a coding agent can stage them by accident. If a commit happens while they are off, your personal notes or local context files end up in the repository history.
+
+```bash
+layer guard            # install a pre-commit hook
+```
+
+The hook checks every commit for layered files and blocks the commit — even while they're temporarily visible via `layer off`. Uninstall with `layer guard --remove` if you no longer need it.
+
 ### History tracking
 
 Layered files are intentionally hidden from Git. That keeps them out of commits, but it also means Git cannot show you when one of those files gets rewritten, deleted, or trimmed. If a coding agent overwrites or removes a local `SPEC.md`, `CLAUDE.md`, or other context file without you noticing, that context can disappear with no normal Git history to recover it from.
@@ -79,12 +89,13 @@ The shadow repo (`.layer/`) is local to your clone and initializes automatically
 
 ### Visibility
 
-| Command                | Description                                |
-| ---------------------- | ------------------------------------------ |
-| `layer off [files...]` | Temporarily un-hide entries                |
-| `layer on [files...]`  | Re-hide disabled entries                   |
-| `layer why <file>`     | Explain why a file is or isn't ignored     |
-| `layer doctor`         | Find exposed, stale, and redundant entries |
+| Command                | Description                                    |
+| ---------------------- | ---------------------------------------------- |
+| `layer off [files...]` | Temporarily un-hide entries                    |
+| `layer on [files...]`  | Re-hide disabled entries                       |
+| `layer guard`          | Block accidental commits of layered files      |
+| `layer why <file>`     | Explain why a file is or isn't ignored         |
+| `layer doctor`         | Find exposed, stale, and redundant entries     |
 
 ### History
 

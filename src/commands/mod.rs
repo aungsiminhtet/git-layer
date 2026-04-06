@@ -7,6 +7,7 @@ pub mod diff_cmd;
 pub mod doctor;
 pub mod edit;
 pub mod global;
+pub mod guard;
 pub mod log_cmd;
 pub mod ls;
 pub mod on_off;

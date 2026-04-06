@@ -1,5 +1,6 @@
 use crate::exclude_file::{ensure_exclude_file_for_write, normalize_entry};
 use crate::git;
+use crate::guard::HookState;
 use crate::ui;
 use anyhow::Result;
 use std::collections::HashSet;
@@ -28,6 +29,7 @@ pub fn run_off(files: Vec<String>, dry_run: bool) -> Result<i32> {
         for entry in &disabled {
             println!("  {} Disabled {entry}", ui::ok());
         }
+        print_guard_warning(&ctx)?;
         Ok(0)
     } else {
         let active_set: HashSet<String> = active.iter().map(|e| e.value.clone()).collect();
@@ -65,6 +67,7 @@ pub fn run_off(files: Vec<String>, dry_run: bool) -> Result<i32> {
         for entry in &disabled {
             println!("  {} Disabled {entry}", ui::ok());
         }
+        print_guard_warning(&ctx)?;
         Ok(0)
     }
 }
@@ -132,4 +135,19 @@ pub fn run_on(files: Vec<String>, dry_run: bool) -> Result<i32> {
         }
         Ok(0)
     }
+}
+
+fn print_guard_warning(ctx: &git::RepoContext) -> Result<()> {
+    match crate::guard::hook_state(ctx)? {
+        HookState::Installed => {}
+        HookState::NotInstalled => {
+            ui::print_warning(
+                "Files are now visible to git. Run layer guard to prevent accidental commits.",
+            );
+        }
+        HookState::ForeignHook => {
+            ui::print_warning("Files are now visible to git. The existing pre-commit hook is not managed by layer.");
+        }
+    }
+    Ok(())
 }

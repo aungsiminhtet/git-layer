@@ -2,6 +2,7 @@ use crate::commands::scan;
 use crate::exclude_file::ensure_exclude_file;
 use crate::git;
 use crate::git::PatternMatchSummary;
+use crate::guard::HookState;
 use crate::shadow::ShadowRepo;
 use crate::ui;
 use anyhow::Result;
@@ -57,6 +58,7 @@ pub fn run() -> Result<i32> {
 
     let mut history_info = None;
     let mut modified_files = Vec::new();
+    let guard_state = crate::guard::hook_state(&ctx)?;
     if let Some(shadow) = ShadowRepo::open(&ctx.root) {
         history_info = shadow.last_snapshot_info().ok().flatten();
         if let Ok(files) = crate::shadow::resolve_history_files(&ctx, &entries, Some(&shadow)) {
@@ -208,6 +210,29 @@ pub fn run() -> Result<i32> {
         );
         for file in &modified_files {
             println!("    {}", ui::warn_text(file));
+        }
+        has_section = true;
+    }
+
+    if has_section {
+        println!();
+    }
+    match guard_state {
+        HookState::Installed => {
+            println!("  {} Guard: pre-commit hook active", ui::ok());
+        }
+        HookState::NotInstalled => {
+            println!(
+                "  {} Guard: not installed ({})",
+                ui::exposed(),
+                ui::brand("layer guard")
+            );
+        }
+        HookState::ForeignHook => {
+            println!(
+                "  {} Guard: existing pre-commit hook not managed by layer",
+                ui::exposed()
+            );
         }
     }
 

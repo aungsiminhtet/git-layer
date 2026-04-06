@@ -49,6 +49,23 @@ fn exclude_path(repo: &Path) -> std::path::PathBuf {
     repo.join(".git").join("info").join("exclude")
 }
 
+fn pre_commit_hook_path(repo: &Path) -> std::path::PathBuf {
+    let output = Command::new("git")
+        .args(["rev-parse", "--git-path", "hooks/pre-commit"])
+        .current_dir(repo)
+        .output()
+        .expect("failed to resolve hook path");
+    assert!(output.status.success(), "git rev-parse failed");
+
+    let raw = String::from_utf8(output.stdout).expect("hook path not utf-8");
+    let path = std::path::PathBuf::from(raw.trim());
+    if path.is_absolute() {
+        path
+    } else {
+        repo.join(path)
+    }
+}
+
 #[test]
 fn add_normalizes_and_dedupes() {
     let repo = init_repo();
@@ -140,6 +157,177 @@ fn why_reports_excluded_and_tracked_state() {
         .code(1)
         .stdout(predicate::str::contains("exposed"))
         .stdout(predicate::str::contains("git rm --cached config.md"));
+}
+
+#[test]
+fn guard_uses_git_hook_path_and_status_round_trip() {
+    let repo = init_repo();
+
+    Command::new("git")
+        .args(["config", "core.hooksPath", ".githooks"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--status"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("Guard: not installed"));
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("guard")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Guard installed"));
+
+    let hook = pre_commit_hook_path(repo.path());
+    let content = fs::read_to_string(&hook).expect("failed to read hook");
+    assert!(content.contains("# layer-guard (managed by layer)"));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = fs::metadata(&hook)
+            .expect("failed to read metadata")
+            .permissions()
+            .mode();
+        assert_ne!(mode & 0o111, 0);
+    }
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pre-commit hook active"));
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--remove"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Guard removed"));
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--status"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn guard_refuses_foreign_hook_without_force_and_can_overwrite() {
+    let repo = init_repo();
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    fs::write(&hook, "#!/bin/sh\nexit 0\n").expect("failed to write foreign hook");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("guard")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("--force"));
+
+    let content = fs::read_to_string(&hook).expect("failed to read foreign hook");
+    assert!(!content.contains("# layer-guard (managed by layer)"));
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--force"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Guard updated"));
+
+    let content = fs::read_to_string(&hook).expect("failed to read overwritten hook");
+    assert!(content.contains("# layer-guard (managed by layer)"));
+}
+
+#[test]
+fn guard_hook_allows_clean_commit() {
+    let repo = init_repo();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("guard")
+        .assert()
+        .success();
+
+    fs::write(repo.path().join("README.md"), "hello").expect("failed to write README");
+
+    Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    Command::new("git")
+        .args(["commit", "-m", "clean commit"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn guard_hook_blocks_layered_file_and_off_stays_quiet_when_installed() {
+    let repo = init_repo();
+    fs::write(repo.path().join("CLAUDE.md"), "secret").expect("failed to write CLAUDE.md");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("guard")
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("off")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("layer guard").not());
+
+    Command::new("git")
+        .args(["add", "CLAUDE.md"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    Command::new("git")
+        .args(["commit", "-m", "should block"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::starts_with("layer guard: commit blocked"))
+        .stderr(predicate::str::contains("CLAUDE.md"));
+}
+
+#[test]
+fn off_warns_when_guard_is_missing() {
+    let repo = init_repo();
+    fs::write(repo.path().join("CLAUDE.md"), "secret").expect("failed to write CLAUDE.md");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("off")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Run layer guard"));
 }
 
 #[test]
