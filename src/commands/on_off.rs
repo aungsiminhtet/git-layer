@@ -1,8 +1,7 @@
 use crate::exclude_file::{ensure_exclude_file_for_write, normalize_entry};
 use crate::git;
-use crate::guard::HookState;
 use crate::ui;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::HashSet;
 
 pub fn run_off(files: Vec<String>, dry_run: bool) -> Result<i32> {
@@ -27,12 +26,13 @@ pub fn run_off(files: Vec<String>, dry_run: bool) -> Result<i32> {
             return Ok(0);
         }
 
+        let restored_guard = restore_guard_before_off(&ctx)?;
         let disabled = exclude.disable_all();
         exclude.write(&ctx.exclude_path)?;
         for entry in &disabled {
-            println!("  {} Now visible to Git: {entry}", ui::ok());
+            println!("  {} Visible to Git: {entry}", ui::ok());
         }
-        print_off_footer(&ctx)?;
+        print_off_footer(&ctx, restored_guard)?;
         Ok(0)
     } else {
         let active_set: HashSet<String> = active.iter().map(|e| e.value.clone()).collect();
@@ -65,12 +65,13 @@ pub fn run_off(files: Vec<String>, dry_run: bool) -> Result<i32> {
             return Ok(0);
         }
 
+        let restored_guard = restore_guard_before_off(&ctx)?;
         let disabled = exclude.disable_entries(&found);
         exclude.write(&ctx.exclude_path)?;
         for entry in &disabled {
-            println!("  {} Now visible to Git: {entry}", ui::ok());
+            println!("  {} Visible to Git: {entry}", ui::ok());
         }
-        print_off_footer(&ctx)?;
+        print_off_footer(&ctx, restored_guard)?;
         Ok(0)
     }
 }
@@ -100,7 +101,7 @@ pub fn run_on(files: Vec<String>, dry_run: bool) -> Result<i32> {
         let enabled = exclude.enable_all();
         exclude.write(&ctx.exclude_path)?;
         for entry in &enabled {
-            println!("  {} Now hidden from Git: {entry}", ui::ok());
+            println!("  {} Hidden from Git: {entry}", ui::ok());
         }
         print_on_footer();
         Ok(0)
@@ -138,34 +139,121 @@ pub fn run_on(files: Vec<String>, dry_run: bool) -> Result<i32> {
         let enabled = exclude.enable_entries(&found);
         exclude.write(&ctx.exclude_path)?;
         for entry in &enabled {
-            println!("  {} Now hidden from Git: {entry}", ui::ok());
+            println!("  {} Hidden from Git: {entry}", ui::ok());
         }
         print_on_footer();
         Ok(0)
     }
 }
 
-fn print_off_footer(ctx: &git::RepoContext) -> Result<()> {
-    match crate::guard::hook_state(ctx)? {
-        HookState::Installed => {
+fn restore_guard_before_off(ctx: &git::RepoContext) -> Result<bool> {
+    let inspection = crate::guard::inspect(ctx)?;
+    if let crate::guard::GuardHealth::NeedsRepairLocal { .. } = inspection.health {
+        crate::guard::repair(ctx)
+            .context("failed to restore guard before making layered files visible to Git")?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn print_off_footer(ctx: &git::RepoContext, restored_guard: bool) -> Result<()> {
+    if restored_guard {
+        println!(
+            "  {} Guard restored — commits containing layered files will still be blocked.",
+            ui::info()
+        );
+        return Ok(());
+    }
+
+    let inspection = crate::guard::inspect(ctx)?;
+    match inspection.health {
+        crate::guard::GuardHealth::ActiveDirect
+        | crate::guard::GuardHealth::ActiveWrapper { .. }
+        | crate::guard::GuardHealth::ActiveManual { .. } => {
             println!(
                 "  {} Guard active — commits containing layered files will still be blocked.",
                 ui::info()
             );
         }
-        HookState::NotInstalled => {
+        crate::guard::GuardHealth::Inactive => {
             println!(
                 "  {} Guard is not installed. Run {} to block accidental commits.",
                 ui::exposed(),
                 ui::brand("layer guard"),
             );
         }
-        HookState::ForeignHook => {
+        crate::guard::GuardHealth::NeedsInstallLocal { framework } => match framework {
+            crate::guard::HookFramework::PreCommit => {
+                println!(
+                    "  {} Guard is not installed. Run {} to wrap the existing Python pre-commit hook.",
+                    ui::exposed(),
+                    ui::brand("layer guard"),
+                );
+            }
+            _ => {
+                println!(
+                    "  {} Guard is not installed. Run {} to set it up with the existing pre-commit hook.",
+                    ui::exposed(),
+                    ui::brand("layer guard"),
+                );
+            }
+        },
+        crate::guard::GuardHealth::NeedsManualExternal { framework } => match framework {
+            crate::guard::HookFramework::Husky => {
+                println!(
+                    "  {} Guard is not installed. Run {} to add it to {}.",
+                    ui::exposed(),
+                    ui::brand("layer guard --manual"),
+                    ui::brand(".husky/pre-commit"),
+                );
+            }
+            crate::guard::HookFramework::Lefthook => {
+                println!(
+                    "  {} Guard is not installed. Run {} to add it to {}.",
+                    ui::exposed(),
+                    ui::brand("layer guard --manual"),
+                    ui::brand("lefthook.yml"),
+                );
+            }
+            _ => {
+                println!(
+                    "  {} Guard is not installed. Run {} for manual setup with the existing pre-commit hook.",
+                    ui::exposed(),
+                    ui::brand("layer guard --manual"),
+                );
+            }
+        },
+        crate::guard::GuardHealth::NeedsRepairLocal { .. } => {
             println!(
-                "  {} Layered files are now visible to Git. The existing pre-commit hook is not managed by layer.",
+                "  {} Guard could not be restored. Run {} to repair it.",
                 ui::exposed(),
+                ui::brand("layer guard --wrapper"),
             );
         }
+        crate::guard::GuardHealth::Broken { local, reason, .. } => match (local, reason) {
+            (false, crate::guard::BrokenReason::MissingExpectedHook) => {
+                println!(
+                    "  {} Guard is managed outside .git. Run {} to repair it before you continue.",
+                    ui::exposed(),
+                    ui::brand("layer guard --manual"),
+                );
+            }
+            (_, crate::guard::BrokenReason::MissingExpectedHook) => {
+                println!(
+                    "  {} Guard is missing. Run {} to restore it before you continue.",
+                    ui::exposed(),
+                    ui::brand("layer guard"),
+                );
+            }
+            (_, crate::guard::BrokenReason::MissingPreservedHook) => {
+                println!(
+                    "  {} Guard is broken. Run {} or {} to repair it before you continue.",
+                    ui::exposed(),
+                    ui::brand("layer guard --remove"),
+                    ui::brand("layer guard --wrapper"),
+                );
+            }
+        },
     }
     Ok(())
 }

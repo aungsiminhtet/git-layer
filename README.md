@@ -51,6 +51,8 @@ layer guard            # install a pre-commit hook
 
 The hook checks every commit for layered files and blocks the commit — even while they're temporarily visible via `layer off`. Uninstall with `layer guard --remove` if you no longer need it.
 
+If no pre-commit hook exists, `layer guard` installs one directly. If a local hook already exists under `.git`, `layer` can preserve it behind a wrapper and run it after the guard. If the hook is managed outside `.git` (for example Husky), `layer` shows manual setup instructions instead of modifying it automatically.
+
 ### History tracking
 
 Layered files are intentionally hidden from Git. That keeps them out of commits, but it also means Git cannot show you when one of those files gets rewritten, deleted, or trimmed. If a coding agent overwrites or removes a local `SPEC.md`, `CLAUDE.md`, or other context file without you noticing, that context can disappear with no normal Git history to recover it from.
@@ -93,7 +95,7 @@ The shadow repo (`.layer/`) is local to your clone and initializes automatically
 | ---------------------- | ---------------------------------------------- |
 | `layer off [files...]` | Temporarily un-hide entries                    |
 | `layer on [files...]`  | Re-hide disabled entries                       |
-| `layer guard`          | Block accidental commits of layered files      |
+| `layer guard`          | Block accidental commits, with wrapper/manual setup for existing hooks |
 | `layer why <file>`     | Explain why a file is or isn't ignored         |
 | `layer doctor`         | Find exposed, stale, and redundant entries     |
 

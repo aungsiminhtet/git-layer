@@ -2,7 +2,6 @@ use crate::commands::scan;
 use crate::exclude_file::ensure_exclude_file;
 use crate::git;
 use crate::git::PatternMatchSummary;
-use crate::guard::HookState;
 use crate::shadow::ShadowRepo;
 use crate::ui;
 use anyhow::Result;
@@ -64,7 +63,7 @@ pub fn run() -> Result<i32> {
 
     let mut history_info = None;
     let mut modified_files = Vec::new();
-    let guard_state = crate::guard::hook_state(&ctx)?;
+    let guard = crate::guard::inspect(&ctx)?;
     let mut printed_guard = false;
     if let Some(shadow) = ShadowRepo::open(&ctx.root) {
         history_info = shadow.last_snapshot_info().ok().flatten();
@@ -122,7 +121,7 @@ pub fn run() -> Result<i32> {
                 }
             );
             println!();
-            print_guard_status_line(guard_state);
+            print_guard_status_line(&guard)?;
             return Ok(0);
         } else {
             println!("  {} Layer: {}", ui::ok(), ui::state_on());
@@ -137,7 +136,7 @@ pub fn run() -> Result<i32> {
                 }
             );
             println!();
-            print_guard_status_line(guard_state);
+            print_guard_status_line(&guard)?;
             return Ok(0);
         }
     }
@@ -167,7 +166,7 @@ pub fn run() -> Result<i32> {
             },
             ui::brand("layer on"),
         );
-        print_guard_status_line(guard_state);
+        print_guard_status_line(&guard)?;
         printed_guard = true;
     }
 
@@ -285,7 +284,7 @@ pub fn run() -> Result<i32> {
         println!();
     }
     if !printed_guard {
-        print_guard_status_line(guard_state);
+        print_guard_status_line(&guard)?;
     }
 
     if !exposed.is_empty() || !tracked_ctx.is_empty() {
@@ -295,25 +294,104 @@ pub fn run() -> Result<i32> {
     Ok(0)
 }
 
-fn print_guard_status_line(guard_state: HookState) {
-    match guard_state {
-        HookState::Installed => {
+fn print_guard_status_line(guard: &crate::guard::GuardInspection) -> Result<()> {
+    match &guard.health {
+        crate::guard::GuardHealth::ActiveDirect
+        | crate::guard::GuardHealth::ActiveWrapper { .. } => {
             println!("  {} Guard: pre-commit hook active", ui::ok());
         }
-        HookState::NotInstalled => {
+        crate::guard::GuardHealth::ActiveManual { framework, .. } => {
+            if let Some(label) = framework.label() {
+                println!(
+                    "  {} Guard: manual integration active via {}",
+                    ui::ok(),
+                    ui::brand(label)
+                );
+            } else {
+                println!("  {} Guard: manual integration active", ui::ok());
+            }
+        }
+        crate::guard::GuardHealth::Inactive => {
             println!(
                 "  {} Guard: not installed — run {} to block accidental commits",
                 ui::exposed(),
                 ui::brand("layer guard")
             );
         }
-        HookState::ForeignHook => {
+        crate::guard::GuardHealth::NeedsRepairLocal { .. } => {
             println!(
-                "  {} Guard: existing pre-commit hook not managed by layer",
-                ui::exposed()
+                "  {} Guard: replaced by another hook installer — run {} to restore it",
+                ui::exposed(),
+                ui::brand("layer guard --wrapper")
             );
         }
+        crate::guard::GuardHealth::NeedsInstallLocal { framework } => match framework {
+            crate::guard::HookFramework::PreCommit => {
+                println!(
+                    "  {} Guard: not installed — run {} to wrap the existing Python pre-commit hook",
+                    ui::exposed(),
+                    ui::brand("layer guard")
+                );
+            }
+            _ => {
+                println!(
+                    "  {} Guard: not installed — run {} to set it up with the existing pre-commit hook",
+                    ui::exposed(),
+                    ui::brand("layer guard")
+                );
+            }
+        },
+        crate::guard::GuardHealth::NeedsManualExternal { framework } => match framework {
+            crate::guard::HookFramework::Husky => {
+                println!(
+                    "  {} Guard: not installed — run {} to add it to {}",
+                    ui::exposed(),
+                    ui::brand("layer guard --manual"),
+                    ui::brand(".husky/pre-commit")
+                );
+            }
+            crate::guard::HookFramework::Lefthook => {
+                println!(
+                    "  {} Guard: not installed — run {} to add it to {}",
+                    ui::exposed(),
+                    ui::brand("layer guard --manual"),
+                    ui::brand("lefthook.yml")
+                );
+            }
+            _ => {
+                println!(
+                    "  {} Guard: not installed — run {} for manual setup with the existing pre-commit hook",
+                    ui::exposed(),
+                    ui::brand("layer guard --manual")
+                );
+            }
+        },
+        crate::guard::GuardHealth::Broken { reason, local, .. } => match (local, reason) {
+            (false, crate::guard::BrokenReason::MissingExpectedHook) => {
+                println!(
+                    "  {} Guard: expected hook is managed outside .git — run {} to repair it",
+                    ui::exposed(),
+                    ui::brand("layer guard --manual")
+                );
+            }
+            (_, crate::guard::BrokenReason::MissingExpectedHook) => {
+                println!(
+                    "  {} Guard: expected hook is missing — run {} to restore it",
+                    ui::exposed(),
+                    ui::brand("layer guard")
+                );
+            }
+            (_, crate::guard::BrokenReason::MissingPreservedHook) => {
+                println!(
+                    "  {} Guard: preserved original hook is missing — run {} or {} to repair it",
+                    ui::exposed(),
+                    ui::brand("layer guard --remove"),
+                    ui::brand("layer guard --wrapper")
+                );
+            }
+        },
     }
+    Ok(())
 }
 
 fn classify_entry(

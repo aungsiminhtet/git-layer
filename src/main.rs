@@ -197,9 +197,12 @@ struct GuardArgs {
     /// Internal hook check mode
     #[arg(long, hide = true)]
     check: bool,
-    /// Overwrite an existing foreign pre-commit hook
+    /// Preserve the existing pre-commit hook behind a layer-managed wrapper
     #[arg(long)]
-    force: bool,
+    wrapper: bool,
+    /// Leave the existing pre-commit hook untouched and print setup instructions
+    #[arg(long)]
+    manual: bool,
 }
 
 #[derive(Args, Debug)]

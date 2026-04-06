@@ -66,6 +66,25 @@ fn pre_commit_hook_path(repo: &Path) -> std::path::PathBuf {
     }
 }
 
+fn preserved_pre_commit_hook_path(repo: &Path) -> std::path::PathBuf {
+    let hook = pre_commit_hook_path(repo);
+    let name = hook
+        .file_name()
+        .expect("hook path should have a file name")
+        .to_string_lossy();
+    hook.with_file_name(format!("{name}.layer-original"))
+}
+
+fn guard_state_path(repo: &Path) -> std::path::PathBuf {
+    repo.join(".git").join("layer").join("guard-state")
+}
+
+fn overwrite_local_guard_wrapper(repo: &Path) {
+    let hook = pre_commit_hook_path(repo);
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    fs::write(&hook, "#!/bin/sh\necho rewritten hook\n").expect("failed to overwrite hook");
+}
+
 #[test]
 fn add_normalizes_and_dedupes() {
     let repo = init_repo();
@@ -174,7 +193,7 @@ fn guard_uses_git_hook_path_and_status_round_trip() {
     let repo = init_repo();
 
     Command::new("git")
-        .args(["config", "core.hooksPath", ".githooks"])
+        .args(["config", "core.hooksPath", ".git/custom-hooks"])
         .current_dir(repo.path())
         .assert()
         .success();
@@ -200,7 +219,11 @@ fn guard_uses_git_hook_path_and_status_round_trip() {
 
     let hook = pre_commit_hook_path(repo.path());
     let content = fs::read_to_string(&hook).expect("failed to read hook");
-    assert!(content.contains("# layer-guard (managed by layer)"));
+    assert!(content.contains("# layer-guard-start"));
+    assert!(
+        guard_state_path(repo.path()).exists(),
+        "guard state should be written on install"
+    );
 
     #[cfg(unix)]
     {
@@ -226,6 +249,10 @@ fn guard_uses_git_hook_path_and_status_round_trip() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Guard removed"));
+    assert!(
+        !guard_state_path(repo.path()).exists(),
+        "guard state should be removed on uninstall"
+    );
 
     Command::new(assert_cmd::cargo::cargo_bin!("layer"))
         .current_dir(repo.path())
@@ -235,7 +262,7 @@ fn guard_uses_git_hook_path_and_status_round_trip() {
 }
 
 #[test]
-fn guard_refuses_foreign_hook_without_force_and_can_overwrite() {
+fn guard_requires_choice_for_existing_hook_in_non_tty() {
     let repo = init_repo();
     let hook = pre_commit_hook_path(repo.path());
     fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
@@ -246,20 +273,498 @@ fn guard_refuses_foreign_hook_without_force_and_can_overwrite() {
         .arg("guard")
         .assert()
         .code(1)
-        .stderr(predicate::str::contains("--force"));
+        .stderr(predicate::str::contains("--wrapper"))
+        .stderr(predicate::str::contains("--manual"));
+}
 
-    let content = fs::read_to_string(&hook).expect("failed to read foreign hook");
-    assert!(!content.contains("# layer-guard (managed by layer)"));
+#[test]
+fn guard_repo_managed_hook_falls_back_to_manual_setup() {
+    let repo = init_repo();
+    Command::new("git")
+        .args(["config", "core.hooksPath", ".husky"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    let foreign_content = "#!/bin/sh\necho husky hook\n";
+    fs::write(&hook, foreign_content).expect("failed to write repo-managed hook");
 
     Command::new(assert_cmd::cargo::cargo_bin!("layer"))
         .current_dir(repo.path())
-        .args(["guard", "--force"])
+        .arg("guard")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Guard updated"));
+        .stdout(predicate::str::contains("Manual setup"))
+        .stdout(predicate::str::contains("outside .git"))
+        .stdout(predicate::str::contains(".husky/pre-commit"))
+        .stdout(predicate::str::contains("If your hook is not shell-based").not())
+        .stdout(predicate::str::contains("layer guard --wrapper").not());
 
-    let content = fs::read_to_string(&hook).expect("failed to read overwritten hook");
-    assert!(content.contains("# layer-guard (managed by layer)"));
+    let content = fs::read_to_string(&hook).expect("failed to read hook after manual fallback");
+    assert_eq!(content, foreign_content);
+    assert!(!guard_state_path(repo.path()).exists());
+}
+
+#[test]
+fn guard_repo_managed_missing_hook_uses_manual_setup() {
+    let repo = init_repo();
+    Command::new("git")
+        .args(["config", "core.hooksPath", ".husky"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let hook = pre_commit_hook_path(repo.path());
+    assert!(!hook.exists(), "repo-managed hook should start missing");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("guard")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Effective pre-commit hook path:"))
+        .stdout(predicate::str::contains(".husky/pre-commit"))
+        .stdout(predicate::str::contains("Repo-managed hook outside"));
+
+    assert!(
+        !hook.exists(),
+        "manual setup should not create external hook"
+    );
+    assert!(!guard_state_path(repo.path()).exists());
+}
+
+#[test]
+fn guard_lefthook_manual_guidance_mentions_config() {
+    let repo = init_repo();
+    Command::new("git")
+        .args(["config", "core.hooksPath", ".githooks"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    fs::write(
+        repo.path().join("lefthook.yml"),
+        "pre-commit:\n  commands: {}\n",
+    )
+    .expect("failed to write lefthook config");
+
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    fs::write(&hook, "#!/bin/sh\necho lefthook\n").expect("failed to write external hook");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("guard")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("lefthook.yml"))
+        .stdout(predicate::str::contains("layer-guard:"))
+        .stdout(predicate::str::contains("run: layer guard --check"))
+        .stdout(predicate::str::contains("If your hook is not shell-based").not());
+}
+
+#[test]
+fn guard_wrapper_refuses_repo_managed_hook() {
+    let repo = init_repo();
+    Command::new("git")
+        .args(["config", "core.hooksPath", ".husky"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    fs::write(&hook, "#!/bin/sh\nexit 0\n").expect("failed to write repo-managed hook");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--wrapper"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("outside .git"))
+        .stderr(predicate::str::contains("--manual"));
+}
+
+#[test]
+fn guard_wrapper_preserves_existing_hook_and_remove_restores_it() {
+    let repo = init_repo();
+    let hook = pre_commit_hook_path(repo.path());
+    let preserved = preserved_pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    let foreign_content = "#!/bin/sh\necho 'user hook'\nexit 0\n";
+    fs::write(&hook, foreign_content).expect("failed to write foreign hook");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--wrapper"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Guard installed"))
+        .stdout(predicate::str::contains(
+            "Existing pre-commit hook preserved at",
+        ));
+
+    let content = fs::read_to_string(&hook).expect("failed to read hook after install");
+    assert!(
+        content.contains("# layer-guard-start"),
+        "guard wrapper added"
+    );
+    assert!(
+        !content.contains("echo 'user hook'"),
+        "user content moved out of wrapper"
+    );
+    let preserved_content =
+        fs::read_to_string(&preserved).expect("failed to read preserved original hook");
+    assert_eq!(preserved_content, foreign_content);
+    let state = fs::read_to_string(guard_state_path(repo.path())).expect("failed to read state");
+    assert!(state.contains("intent=wrapper"));
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Chaining existing pre-commit hook",
+        ));
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--remove"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Guard removed"))
+        .stdout(predicate::str::contains(
+            "Restored original pre-commit hook",
+        ));
+
+    let content = fs::read_to_string(&hook).expect("failed to read hook after remove");
+    assert_eq!(content, foreign_content, "original hook restored");
+    assert!(!preserved.exists(), "preserved hook should be removed");
+    assert!(!guard_state_path(repo.path()).exists());
+}
+
+#[test]
+fn guard_manual_prints_snippet_and_leaves_existing_hook_untouched() {
+    let repo = init_repo();
+    let hook = pre_commit_hook_path(repo.path());
+    let preserved = preserved_pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    let foreign_content = "#!/usr/bin/env python3\nprint('user hook')\n";
+    fs::write(&hook, foreign_content).expect("failed to write foreign hook");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--manual"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Manual setup"))
+        .stdout(predicate::str::contains("layer guard --check"))
+        .stdout(predicate::str::contains("If your hook is not shell-based"))
+        .stdout(predicate::str::contains("layer guard --wrapper"));
+
+    let content = fs::read_to_string(&hook).expect("failed to read hook after manual output");
+    assert_eq!(
+        content, foreign_content,
+        "manual mode should not modify hook"
+    );
+    assert!(
+        !preserved.exists(),
+        "manual mode should not create preserved hook"
+    );
+    assert!(!guard_state_path(repo.path()).exists());
+}
+
+#[test]
+fn guard_remove_explains_manual_integration() {
+    let repo = init_repo();
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    fs::write(
+        &hook,
+        "#!/bin/sh\n# layer-guard-manual\nlayer guard --check || exit $?\n",
+    )
+    .expect("failed to write manual hook");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--remove"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Guard was integrated manually"))
+        .stdout(predicate::str::contains("layer guard --check"));
+}
+
+#[test]
+fn guard_wrapper_mentions_pre_commit_reinstall_behavior() {
+    let repo = init_repo();
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    fs::write(&hook, "#!/bin/sh\necho pre-commit shim\n").expect("failed to write hook");
+    fs::write(repo.path().join(".pre-commit-config.yaml"), "repos: []\n")
+        .expect("failed to write pre-commit config");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--wrapper"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pre-commit install"))
+        .stdout(predicate::str::contains("layer off"));
+}
+
+#[test]
+fn guard_wrapper_blocks_layered_file_before_original_hook_runs() {
+    let repo = init_repo();
+    fs::write(repo.path().join("CLAUDE.md"), "secret").expect("failed to write CLAUDE.md");
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    fs::write(&hook, "#!/bin/sh\necho user hook\nexit 0\n").expect("failed to write foreign hook");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--wrapper"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("off")
+        .assert()
+        .success();
+
+    Command::new("git")
+        .args(["add", "CLAUDE.md"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    Command::new("git")
+        .args(["commit", "-m", "should block"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::starts_with("layer guard: commit blocked"))
+        .stderr(predicate::str::contains("CLAUDE.md"))
+        .stdout(predicate::str::contains("user hook").not());
+}
+
+#[test]
+fn guard_wrapper_chains_non_shell_hook() {
+    let repo = init_repo();
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    fs::write(&hook, "#!/usr/bin/env python3\nprint('python hook')\n")
+        .expect("failed to write python hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut perms = fs::metadata(&hook)
+            .expect("failed to read python hook metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&hook, perms).expect("failed to make python hook executable");
+    }
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--wrapper"])
+        .assert()
+        .success();
+
+    fs::write(repo.path().join("README.md"), "hello").expect("failed to write README");
+
+    Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    Command::new("git")
+        .args(["commit", "-m", "clean commit"])
+        .current_dir(repo.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("python hook"));
+}
+
+#[test]
+fn guard_manager_switch_repairs_to_latest_local_hook() {
+    let repo = init_repo();
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    fs::write(&hook, "#!/bin/sh\necho shell hook\n").expect("failed to write initial hook");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--wrapper"])
+        .assert()
+        .success();
+
+    fs::write(&hook, "#!/usr/bin/env python3\nprint('python hook')\n")
+        .expect("failed to overwrite hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut perms = fs::metadata(&hook)
+            .expect("failed to read overwritten hook metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&hook, perms).expect("failed to make overwritten hook executable");
+    }
+
+    fs::write(repo.path().join("CLAUDE.md"), "secret").expect("failed to write CLAUDE.md");
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("off")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Guard restored"));
+
+    fs::write(repo.path().join("README.md"), "hello").expect("failed to write README");
+    Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    Command::new("git")
+        .args(["commit", "-m", "clean commit"])
+        .current_dir(repo.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("python hook"))
+        .stdout(predicate::str::contains("shell hook").not());
+}
+
+#[test]
+fn guard_direct_install_repairs_to_wrapper_after_local_hook_replaces_it() {
+    let repo = init_repo();
+    let hook = pre_commit_hook_path(repo.path());
+    let preserved = preserved_pre_commit_hook_path(repo.path());
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("guard")
+        .assert()
+        .success();
+
+    fs::write(&hook, "#!/bin/sh\necho replacement hook\n").expect("failed to overwrite hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut perms = fs::metadata(&hook)
+            .expect("failed to read overwritten hook metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&hook, perms).expect("failed to make overwritten hook executable");
+    }
+
+    fs::write(repo.path().join("CLAUDE.md"), "secret").expect("failed to write CLAUDE.md");
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("off")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Guard restored"));
+
+    let state = fs::read_to_string(guard_state_path(repo.path())).expect("failed to read state");
+    assert!(state.contains("intent=wrapper"));
+    let preserved_content =
+        fs::read_to_string(&preserved).expect("failed to read preserved replaced hook");
+    assert!(preserved_content.contains("replacement hook"));
+
+    fs::write(repo.path().join("README.md"), "hello").expect("failed to write README");
+    Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    Command::new("git")
+        .args(["commit", "-m", "clean commit"])
+        .current_dir(repo.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("replacement hook"));
+}
+
+#[test]
+fn guard_status_reports_overwritten_local_wrapper_and_wrapper_repairs_it() {
+    let repo = init_repo();
+    let hook = pre_commit_hook_path(repo.path());
+    let preserved = preserved_pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    fs::write(&hook, "#!/bin/sh\necho user hook\n").expect("failed to write foreign hook");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--wrapper"])
+        .assert()
+        .success();
+
+    overwrite_local_guard_wrapper(repo.path());
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--status"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "replaced by another hook installer",
+        ))
+        .stdout(predicate::str::contains("layer guard --wrapper"));
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--wrapper"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Guard restored"));
+
+    let content = fs::read_to_string(&hook).expect("failed to read repaired hook");
+    assert!(content.contains("# layer-guard-start"));
+    let preserved_content =
+        fs::read_to_string(&preserved).expect("failed to read preserved hook after repair");
+    assert!(preserved_content.contains("rewritten hook"));
+    let state = fs::read_to_string(guard_state_path(repo.path())).expect("failed to read state");
+    assert!(state.contains("intent=wrapper"));
+
+    fs::write(repo.path().join("README.md"), "hello").expect("failed to write README");
+    Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    Command::new("git")
+        .args(["commit", "-m", "manager switch"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
 }
 
 #[test]
@@ -344,6 +849,39 @@ fn off_warns_when_guard_is_missing() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Run layer guard"));
+}
+
+#[test]
+fn off_restores_overwritten_local_guard() {
+    let repo = init_repo();
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    fs::write(&hook, "#!/bin/sh\necho user hook\n").expect("failed to write foreign hook");
+    fs::write(repo.path().join("CLAUDE.md"), "secret").expect("failed to write CLAUDE.md");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--wrapper"])
+        .assert()
+        .success();
+
+    overwrite_local_guard_wrapper(repo.path());
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("off")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Guard restored"));
+
+    let content = fs::read_to_string(&hook).expect("failed to read repaired hook");
+    assert!(content.contains("# layer-guard-start"));
 }
 
 #[test]
@@ -786,8 +1324,8 @@ fn off_disables_all_entries() {
         .arg("off")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Now visible to Git: CLAUDE.md"))
-        .stdout(predicate::str::contains("Now visible to Git: Agents.md"));
+        .stdout(predicate::str::contains("Visible to Git: CLAUDE.md"))
+        .stdout(predicate::str::contains("Visible to Git: Agents.md"));
 
     let content = fs::read_to_string(exclude_path(repo.path())).expect("read");
     assert!(content.contains("# [off] CLAUDE.md"));
@@ -810,8 +1348,8 @@ fn on_enables_all_entries() {
         .arg("on")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Now hidden from Git: CLAUDE.md"))
-        .stdout(predicate::str::contains("Now hidden from Git: Agents.md"))
+        .stdout(predicate::str::contains("Hidden from Git: CLAUDE.md"))
+        .stdout(predicate::str::contains("Hidden from Git: Agents.md"))
         .stdout(predicate::str::contains("hidden from Git again"));
 
     let content = fs::read_to_string(&exclude).expect("read");
@@ -835,7 +1373,7 @@ fn off_specific_entry() {
         .args(["off", "CLAUDE.md"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Now visible to Git: CLAUDE.md"));
+        .stdout(predicate::str::contains("Visible to Git: CLAUDE.md"));
 
     let content = fs::read_to_string(exclude_path(repo.path())).expect("read");
     assert!(content.contains("# [off] CLAUDE.md"));
@@ -858,7 +1396,7 @@ fn on_specific_entry() {
         .args(["on", "CLAUDE.md"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Now hidden from Git: CLAUDE.md"))
+        .stdout(predicate::str::contains("Hidden from Git: CLAUDE.md"))
         .stdout(predicate::str::contains("hidden from Git again"));
 
     let content = fs::read_to_string(&exclude).expect("read");

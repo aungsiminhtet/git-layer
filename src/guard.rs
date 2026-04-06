@@ -6,79 +6,522 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const HOOK_MARKER: &str = "# layer-guard (managed by layer)";
+pub const GUARD_START: &str = "# layer-guard-start";
+pub const GUARD_END: &str = "# layer-guard-end";
+pub const MANUAL_MARKER: &str = "# layer-guard-manual";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HookState {
-    Installed,
-    NotInstalled,
-    ForeignHook,
+pub enum InstallMode {
+    Auto,
+    Wrapper,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstallResult {
     Installed,
+    Wrapped(PathBuf),
+    Restored(PathBuf),
     Updated,
 }
 
-pub fn hook_script() -> Result<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoveResult {
+    Removed,
+    Restored(PathBuf),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookFramework {
+    Unknown,
+    PreCommit,
+    Husky,
+    Lefthook,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuardIntent {
+    None,
+    Direct,
+    Wrapper { framework: HookFramework },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservedHook {
+    MissingLocal,
+    MissingExternal,
+    Managed { preserved_exists: bool },
+    ForeignLocal,
+    ForeignExternal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrokenReason {
+    MissingExpectedHook,
+    MissingPreservedHook,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuardHealth {
+    Inactive,
+    ActiveDirect,
+    ActiveWrapper {
+        preserved: PathBuf,
+        framework: HookFramework,
+    },
+    ActiveManual {
+        local: bool,
+        framework: HookFramework,
+    },
+    NeedsInstallLocal {
+        framework: HookFramework,
+    },
+    NeedsManualExternal {
+        framework: HookFramework,
+    },
+    NeedsRepairLocal {
+        preserved: Option<PathBuf>,
+        framework: HookFramework,
+    },
+    Broken {
+        local: bool,
+        reason: BrokenReason,
+        framework: HookFramework,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuardInspection {
+    pub path: PathBuf,
+    pub preserved_path: PathBuf,
+    pub local: bool,
+    pub framework: HookFramework,
+    pub intent: GuardIntent,
+    pub observed: ObservedHook,
+    pub health: GuardHealth,
+}
+
+fn layer_bin() -> Result<PathBuf> {
     let layer_bin = std::env::current_exe().context("failed to resolve layer executable path")?;
-    Ok(render_hook_script(&layer_bin))
+    Ok(layer_bin)
+}
+
+impl HookFramework {
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            HookFramework::Unknown => None,
+            HookFramework::PreCommit => Some("Python pre-commit"),
+            HookFramework::Husky => Some("Husky"),
+            HookFramework::Lefthook => Some("Lefthook"),
+        }
+    }
+
+    fn as_state_value(self) -> &'static str {
+        match self {
+            HookFramework::Unknown => "unknown",
+            HookFramework::PreCommit => "pre_commit",
+            HookFramework::Husky => "husky",
+            HookFramework::Lefthook => "lefthook",
+        }
+    }
+
+    fn from_state_value(value: &str) -> Self {
+        match value {
+            "pre_commit" => HookFramework::PreCommit,
+            "husky" => HookFramework::Husky,
+            "lefthook" => HookFramework::Lefthook,
+            _ => HookFramework::Unknown,
+        }
+    }
+}
+
+fn intent_path(ctx: &RepoContext) -> PathBuf {
+    ctx.git_dir.join("layer").join("guard-state")
+}
+
+pub fn read_guard_intent(ctx: &RepoContext) -> GuardIntent {
+    let path = intent_path(ctx);
+    let Ok(content) = fs::read_to_string(path) else {
+        return GuardIntent::None;
+    };
+
+    let mut intent = GuardIntent::None;
+    let mut framework = HookFramework::Unknown;
+
+    for line in content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if let Some(value) = line.strip_prefix("framework=") {
+            framework = HookFramework::from_state_value(value);
+            continue;
+        }
+
+        if let Some(value) = line.strip_prefix("intent=") {
+            intent = match value {
+                "direct" => GuardIntent::Direct,
+                "wrapper" => GuardIntent::Wrapper { framework },
+                _ => GuardIntent::None,
+            };
+        }
+    }
+
+    match intent {
+        GuardIntent::Wrapper { .. } => GuardIntent::Wrapper { framework },
+        _ => intent,
+    }
+}
+
+pub fn write_guard_intent(ctx: &RepoContext, intent: GuardIntent) -> Result<()> {
+    let path = intent_path(ctx);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let content = match intent {
+        GuardIntent::None => return clear_guard_intent(ctx),
+        GuardIntent::Direct => "version=1\nintent=direct\n".to_string(),
+        GuardIntent::Wrapper { framework } => format!(
+            "version=1\nframework={}\nintent=wrapper\n",
+            framework.as_state_value()
+        ),
+    };
+
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, content).with_context(|| format!("failed to write {}", tmp.display()))?;
+    fs::rename(&tmp, &path)
+        .with_context(|| format!("failed to move {} into place", path.display()))?;
+    Ok(())
+}
+
+pub fn clear_guard_intent(ctx: &RepoContext) -> Result<()> {
+    let path = intent_path(ctx);
+    if path.exists() {
+        fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
+    }
+    Ok(())
 }
 
 pub fn hook_path(ctx: &RepoContext) -> Result<PathBuf> {
     git::git_path(&ctx.root, "hooks/pre-commit")
 }
 
-pub fn hook_state(ctx: &RepoContext) -> Result<HookState> {
-    let path = hook_path(ctx)?;
-    if !path.exists() {
-        return Ok(HookState::NotInstalled);
-    }
+pub fn hook_path_is_local(ctx: &RepoContext) -> Result<bool> {
+    Ok(hook_path(ctx)?.starts_with(&ctx.git_dir))
+}
 
-    let content =
-        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    if content.contains(HOOK_MARKER) {
-        Ok(HookState::Installed)
+pub fn preserved_hook_path(ctx: &RepoContext) -> Result<PathBuf> {
+    Ok(preserved_hook_path_from(&hook_path(ctx)?))
+}
+
+pub fn preserved_hook(ctx: &RepoContext) -> Result<Option<PathBuf>> {
+    let path = preserved_hook_path(ctx)?;
+    if path.exists() {
+        Ok(Some(path))
     } else {
-        Ok(HookState::ForeignHook)
+        Ok(None)
     }
 }
 
-pub fn install(ctx: &RepoContext, force: bool) -> Result<InstallResult> {
-    let state = hook_state(ctx)?;
-    if matches!(state, HookState::ForeignHook) && !force {
-        return Err(anyhow!(
-            "pre-commit hook already exists and is not managed by layer. Re-run with --force to overwrite it"
-        ));
-    }
-
+pub fn inspect(ctx: &RepoContext) -> Result<GuardInspection> {
     let path = hook_path(ctx)?;
-    let script = hook_script()?;
-    write_hook(&path, &script)?;
+    let local = hook_path_is_local(ctx)?;
+    let preserved = preserved_hook_path_from(&path);
+    let preserved_exists = preserved.exists();
+    let intent = read_guard_intent(ctx);
 
-    Ok(match state {
-        HookState::NotInstalled => InstallResult::Installed,
-        HookState::Installed | HookState::ForeignHook => InstallResult::Updated,
+    let content = if path.exists() {
+        Some(
+            fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?,
+        )
+    } else {
+        None
+    };
+
+    let framework = detect_framework(ctx, &path, content.as_deref());
+    let observed = match content.as_deref() {
+        None if local => ObservedHook::MissingLocal,
+        None => ObservedHook::MissingExternal,
+        Some(content) if content.contains(GUARD_START) || content.contains(MANUAL_MARKER) => {
+            ObservedHook::Managed { preserved_exists }
+        }
+        Some(_) if local => ObservedHook::ForeignLocal,
+        Some(_) => ObservedHook::ForeignExternal,
+    };
+    let health = match content.as_deref() {
+        None if local => match intent {
+            GuardIntent::None => GuardHealth::Inactive,
+            GuardIntent::Direct => GuardHealth::NeedsRepairLocal {
+                preserved: None,
+                framework,
+            },
+            GuardIntent::Wrapper { .. } if preserved_exists => GuardHealth::NeedsRepairLocal {
+                preserved: Some(preserved.clone()),
+                framework: framework_from_intent(intent, framework),
+            },
+            GuardIntent::Wrapper { .. } => GuardHealth::Broken {
+                local: true,
+                reason: BrokenReason::MissingPreservedHook,
+                framework: framework_from_intent(intent, framework),
+            },
+        },
+        None => match intent {
+            GuardIntent::None => GuardHealth::NeedsManualExternal { framework },
+            _ => GuardHealth::Broken {
+                local: false,
+                reason: BrokenReason::MissingExpectedHook,
+                framework: framework_from_intent(intent, framework),
+            },
+        },
+        Some(content) if content.contains(GUARD_START) => {
+            if content.contains("ORIGINAL_HOOK=''") {
+                GuardHealth::ActiveDirect
+            } else if preserved_exists {
+                GuardHealth::ActiveWrapper {
+                    preserved: preserved.clone(),
+                    framework: framework_from_intent(intent, framework),
+                }
+            } else {
+                GuardHealth::Broken {
+                    local,
+                    reason: BrokenReason::MissingPreservedHook,
+                    framework: framework_from_intent(intent, framework),
+                }
+            }
+        }
+        Some(content) if content.contains(MANUAL_MARKER) => {
+            GuardHealth::ActiveManual { local, framework }
+        }
+        Some(_) if local => match intent {
+            GuardIntent::None => GuardHealth::NeedsInstallLocal { framework },
+            _ => GuardHealth::NeedsRepairLocal {
+                preserved: Some(preserved.clone()),
+                framework: framework_from_intent(intent, framework),
+            },
+        },
+        Some(_) => match intent {
+            GuardIntent::None => GuardHealth::NeedsManualExternal { framework },
+            _ => GuardHealth::Broken {
+                local: false,
+                reason: BrokenReason::MissingExpectedHook,
+                framework: framework_from_intent(intent, framework),
+            },
+        },
+    };
+
+    Ok(GuardInspection {
+        path,
+        preserved_path: preserved,
+        local,
+        framework,
+        intent,
+        observed,
+        health,
     })
 }
 
-pub fn remove(ctx: &RepoContext) -> Result<bool> {
+fn framework_from_intent(intent: GuardIntent, fallback: HookFramework) -> HookFramework {
+    match intent {
+        GuardIntent::Wrapper { framework } if framework != HookFramework::Unknown => framework,
+        _ => fallback,
+    }
+}
+
+fn detect_framework(
+    ctx: &RepoContext,
+    hook_path: &Path,
+    hook_content: Option<&str>,
+) -> HookFramework {
+    if hook_path
+        .components()
+        .any(|component| component.as_os_str() == ".husky")
+    {
+        return HookFramework::Husky;
+    }
+
+    if ctx.root.join("lefthook.yml").exists() || ctx.root.join("lefthook.yaml").exists() {
+        return HookFramework::Lefthook;
+    }
+
+    if ctx.root.join(".pre-commit-config.yaml").exists()
+        || ctx.root.join(".pre-commit-config.yml").exists()
+        || hook_content
+            .map(|content| content.contains("generated by pre-commit"))
+            .unwrap_or(false)
+    {
+        return HookFramework::PreCommit;
+    }
+
+    HookFramework::Unknown
+}
+
+pub fn install(ctx: &RepoContext, mode: InstallMode) -> Result<InstallResult> {
+    let inspection = inspect(ctx)?;
+    let layer_bin = layer_bin()?;
+
+    match (&inspection.health, inspection.intent, inspection.observed) {
+        (GuardHealth::Inactive, _, ObservedHook::MissingLocal) => {
+            write_hook(&inspection.path, &render_managed_hook(&layer_bin, None))?;
+            write_guard_intent(ctx, GuardIntent::Direct)?;
+            Ok(InstallResult::Installed)
+        }
+        (GuardHealth::ActiveDirect, _, _) => {
+            write_hook(&inspection.path, &render_managed_hook(&layer_bin, None))?;
+            write_guard_intent(ctx, GuardIntent::Direct)?;
+            Ok(InstallResult::Updated)
+        }
+        (GuardHealth::ActiveWrapper { preserved, .. }, _, _) => {
+            write_hook(
+                &inspection.path,
+                &render_managed_hook(&layer_bin, Some(preserved)),
+            )?;
+            write_guard_intent(
+                ctx,
+                GuardIntent::Wrapper {
+                    framework: inspection.framework,
+                },
+            )?;
+            Ok(InstallResult::Updated)
+        }
+        (GuardHealth::ActiveManual { .. }, _, _) => Err(anyhow!(
+            "the effective pre-commit hook is configured manually. Remove the manual guard block first if you want layer to manage it directly"
+        )),
+        (GuardHealth::NeedsInstallLocal { .. }, _, ObservedHook::ForeignLocal) => {
+            if mode != InstallMode::Wrapper {
+                return Err(anyhow!(
+                    "existing pre-commit hook detected. Re-run with --wrapper to preserve it, or --manual for setup instructions"
+                ));
+            }
+            preserve_current_hook(&inspection.path, &inspection.preserved_path)?;
+            write_hook(
+                &inspection.path,
+                &render_managed_hook(&layer_bin, Some(&inspection.preserved_path)),
+            )?;
+            write_guard_intent(
+                ctx,
+                GuardIntent::Wrapper {
+                    framework: inspection.framework,
+                },
+            )?;
+            Ok(InstallResult::Wrapped(inspection.preserved_path.clone()))
+        }
+        (GuardHealth::NeedsRepairLocal { .. }, _, _) => repair(ctx),
+        (GuardHealth::NeedsManualExternal { .. }, _, _) => Err(anyhow!(
+            "the effective pre-commit hook lives outside .git. Run --manual instead"
+        )),
+        (GuardHealth::Broken { reason, .. }, _, _) => Err(match reason {
+            BrokenReason::MissingExpectedHook => anyhow!(
+                "guard state expects a managed hook, but the effective pre-commit hook is missing or managed elsewhere"
+            ),
+            BrokenReason::MissingPreservedHook => anyhow!(
+                "guard state expects a preserved pre-commit hook, but it is missing"
+            ),
+        }),
+        _ => Err(anyhow!(
+            "guard install: unexpected state (health={:?}, intent={:?}, observed={:?})",
+            inspection.health,
+            inspection.intent,
+            inspection.observed
+        )),
+    }
+}
+
+pub fn repair(ctx: &RepoContext) -> Result<InstallResult> {
+    let inspection = inspect(ctx)?;
+    let layer_bin = layer_bin()?;
+
+    match (&inspection.health, inspection.intent, inspection.observed) {
+        (GuardHealth::NeedsRepairLocal { .. }, GuardIntent::Direct, ObservedHook::MissingLocal) => {
+            write_hook(&inspection.path, &render_managed_hook(&layer_bin, None))?;
+            write_guard_intent(ctx, GuardIntent::Direct)?;
+            Ok(InstallResult::Installed)
+        }
+        (GuardHealth::NeedsRepairLocal { .. }, GuardIntent::Direct, ObservedHook::ForeignLocal) => {
+            preserve_current_hook(&inspection.path, &inspection.preserved_path)?;
+            write_hook(
+                &inspection.path,
+                &render_managed_hook(&layer_bin, Some(&inspection.preserved_path)),
+            )?;
+            write_guard_intent(
+                ctx,
+                GuardIntent::Wrapper {
+                    framework: inspection.framework,
+                },
+            )?;
+            Ok(InstallResult::Restored(inspection.preserved_path.clone()))
+        }
+        (
+            GuardHealth::NeedsRepairLocal {
+                preserved: Some(preserved),
+                ..
+            },
+            GuardIntent::Wrapper { framework },
+            ObservedHook::MissingLocal,
+        ) => {
+            write_hook(
+                &inspection.path,
+                &render_managed_hook(&layer_bin, Some(preserved)),
+            )?;
+            write_guard_intent(ctx, GuardIntent::Wrapper { framework })?;
+            Ok(InstallResult::Restored(preserved.clone()))
+        }
+        (
+            GuardHealth::NeedsRepairLocal { .. },
+            GuardIntent::Wrapper { framework },
+            ObservedHook::ForeignLocal,
+        ) => {
+            preserve_current_hook(&inspection.path, &inspection.preserved_path)?;
+            write_hook(
+                &inspection.path,
+                &render_managed_hook(&layer_bin, Some(&inspection.preserved_path)),
+            )?;
+            write_guard_intent(ctx, GuardIntent::Wrapper { framework })?;
+            Ok(InstallResult::Restored(inspection.preserved_path.clone()))
+        }
+        _ => Err(anyhow!(
+            "guard repair is not available for the current hook state"
+        )),
+    }
+}
+
+pub fn remove(ctx: &RepoContext) -> Result<RemoveResult> {
     let path = hook_path(ctx)?;
     if !path.exists() {
-        return Ok(false);
+        clear_guard_intent(ctx)?;
+        return Ok(RemoveResult::Removed);
     }
 
     let content =
         fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    if !content.contains(HOOK_MARKER) {
+    if !content.contains(GUARD_START) {
         return Err(anyhow!(
             "pre-commit hook exists and is not managed by layer"
         ));
     }
 
-    fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
-    Ok(true)
+    let preserved = preserved_hook_path_from(&path);
+    if preserved.exists() {
+        fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
+        fs::rename(&preserved, &path).with_context(|| {
+            format!(
+                "failed to restore preserved pre-commit hook from {}",
+                preserved.display()
+            )
+        })?;
+        clear_guard_intent(ctx)?;
+        return Ok(RemoveResult::Restored(path));
+    }
+
+    let remaining = strip_guard_block(&content);
+    if is_guard_only(&remaining) {
+        fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
+    } else {
+        write_hook(&path, &remaining)?;
+    }
+    clear_guard_intent(ctx)?;
+    Ok(RemoveResult::Removed)
 }
 
 pub fn check(ctx: &RepoContext) -> Result<Vec<String>> {
@@ -97,11 +540,97 @@ pub fn check(ctx: &RepoContext) -> Result<Vec<String>> {
     Ok(blocked)
 }
 
-fn render_hook_script(layer_bin: &Path) -> String {
+pub fn manual_shell_snippet() -> Result<String> {
+    Ok(render_manual_shell_snippet(&layer_bin()?))
+}
+
+pub fn manual_husky_snippet() -> String {
+    format!("{MANUAL_MARKER}\nlayer guard --check || exit $?")
+}
+
+pub fn manual_lefthook_snippet() -> String {
+    format!("{MANUAL_MARKER}\nlayer-guard:\n  run: layer guard --check")
+}
+
+fn render_managed_hook(layer_bin: &Path, preserved_hook: Option<&Path>) -> String {
+    let quoted = sh_quote(&layer_bin.to_string_lossy());
+    let preserved = preserved_hook
+        .map(|path| sh_quote(&path.to_string_lossy()))
+        .unwrap_or_else(|| "''".to_string());
+    format!(
+        "#!/bin/sh\n{GUARD_START}\nLAYER_BIN={quoted}\nORIGINAL_HOOK={preserved}\nrun_layer_guard() {{\n    if [ -x \"$LAYER_BIN\" ]; then\n        \"$LAYER_BIN\" guard --check\n    elif command -v layer >/dev/null 2>&1; then\n        layer guard --check\n    else\n        echo \"layer guard: unable to find the layer binary\" >&2\n        echo \"run 'layer guard' to refresh the hook\" >&2\n        return 1\n    fi\n}}\n\n# Block layered files already staged before the original hook runs.\nrun_layer_guard || exit $?\n\nif [ -n \"$ORIGINAL_HOOK\" ]; then\n    if [ -x \"$ORIGINAL_HOOK\" ]; then\n        \"$ORIGINAL_HOOK\" \"$@\" || exit $?\n    else\n        echo \"layer guard: preserved pre-commit hook not found at $ORIGINAL_HOOK\" >&2\n        echo \"run 'layer guard --remove' or 'layer guard --wrapper' to repair the hook\" >&2\n        exit 1\n    fi\nfi\n\n# Re-check in case the original hook staged layered files.\nrun_layer_guard || exit $?\n{GUARD_END}\n"
+    )
+}
+
+fn render_manual_shell_snippet(layer_bin: &Path) -> String {
     let quoted = sh_quote(&layer_bin.to_string_lossy());
     format!(
-        "#!/bin/sh\n{HOOK_MARKER}\nLAYER_BIN={quoted}\nif [ -x \"$LAYER_BIN\" ]; then\n    exec \"$LAYER_BIN\" guard --check\nfi\nif command -v layer >/dev/null 2>&1; then\n    exec layer guard --check\nfi\necho \"layer guard: unable to find the layer binary\" >&2\necho \"run 'layer guard --force' to refresh the hook\" >&2\nexit 1\n"
+        "{MANUAL_MARKER}\nLAYER_BIN={quoted}\nif [ -x \"$LAYER_BIN\" ]; then\n    \"$LAYER_BIN\" guard --check || exit $?\nelif command -v layer >/dev/null 2>&1; then\n    layer guard --check || exit $?\nelse\n    echo \"layer guard: unable to find the layer binary\" >&2\n    exit 1\nfi"
     )
+}
+
+fn strip_guard_block(content: &str) -> String {
+    let mut result = String::new();
+    let mut in_block = false;
+
+    for line in content.lines() {
+        if line.trim() == GUARD_START {
+            in_block = true;
+            continue;
+        }
+        if in_block {
+            if line.trim() == GUARD_END {
+                in_block = false;
+            }
+            continue;
+        }
+        result.push_str(line);
+        result.push('\n');
+    }
+    result
+}
+
+fn is_guard_only(content: &str) -> bool {
+    let trimmed = content.trim();
+    trimmed.is_empty() || trimmed == "#!/bin/sh"
+}
+
+fn preserved_hook_path_from(hook_path: &Path) -> PathBuf {
+    let file_name = hook_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "pre-commit".to_string());
+    hook_path.with_file_name(format!("{file_name}.layer-original"))
+}
+
+fn legacy_hook_path_from(hook_path: &Path) -> PathBuf {
+    let file_name = hook_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "pre-commit".to_string());
+    hook_path.with_file_name(format!("{file_name}.legacy"))
+}
+
+fn cleanup_stale_legacy_wrapper(hook_path: &Path) -> Result<()> {
+    let legacy = legacy_hook_path_from(hook_path);
+    if !legacy.exists() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&legacy)
+        .with_context(|| format!("failed to read {}", legacy.display()))?;
+    if content.contains(GUARD_START) {
+        fs::remove_file(&legacy)
+            .with_context(|| format!("failed to remove {}", legacy.display()))?;
+    }
+    Ok(())
+}
+
+fn preserve_current_hook(hook_path: &Path, preserved_path: &Path) -> Result<()> {
+    let current = fs::read_to_string(hook_path)
+        .with_context(|| format!("failed to read {}", hook_path.display()))?;
+    write_hook(preserved_path, &current)?;
+    cleanup_stale_legacy_wrapper(hook_path)
 }
 
 pub(crate) fn sh_quote(value: &str) -> String {
@@ -163,9 +692,8 @@ fn matches_entry(file: &str, entry: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{matches_entry, remove, render_hook_script, HOOK_MARKER};
+    use super::*;
     use crate::git::RepoContext;
-    use std::path::{Path, PathBuf};
     use std::process::Command;
     use tempfile::tempdir;
 
@@ -200,16 +728,69 @@ mod tests {
     }
 
     #[test]
-    fn hook_script_contains_marker() {
-        let script = render_hook_script(Path::new("/tmp/layer"));
-        assert!(script.contains(HOOK_MARKER));
-        assert!(script.contains("guard --check"));
+    fn managed_hook_contains_markers_and_guard_checks() {
+        let hook = render_managed_hook(std::path::Path::new("/tmp/layer"), None);
+        assert!(hook.contains("#!/bin/sh"));
+        assert!(hook.contains(GUARD_START));
+        assert!(hook.contains(GUARD_END));
+        assert!(hook.contains("guard --check"));
+    }
+
+    #[test]
+    fn strip_guard_block_removes_markers() {
+        let content =
+            "#!/bin/sh\necho 'user'\n# layer-guard-start\nlayer stuff\n# layer-guard-end\n";
+        let result = strip_guard_block(content);
+        assert!(result.contains("echo 'user'"));
+        assert!(!result.contains("layer-guard-start"));
+        assert!(!result.contains("layer stuff"));
+    }
+
+    #[test]
+    fn strip_guard_block_only_shebang_left() {
+        let content = "#!/bin/sh\n# layer-guard-start\nlayer stuff\n# layer-guard-end\n";
+        let result = strip_guard_block(content);
+        assert_eq!(result.trim(), "#!/bin/sh");
+    }
+
+    #[test]
+    fn manual_shell_snippet_uses_guard_check() {
+        let snippet = render_manual_shell_snippet(std::path::Path::new("/tmp/layer"));
+        assert!(snippet.contains("guard --check"));
+        assert!(!snippet.contains(GUARD_START));
+    }
+
+    #[test]
+    fn repairable_local_overwrite_requires_local_foreign_hook_and_preserved_original() {
+        let (_tmp, ctx) = init_repo();
+        let hook = ctx.root.join(".git").join("hooks").join("pre-commit");
+        let preserved = hook.with_file_name("pre-commit.layer-original");
+        std::fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+
+        std::fs::write(&hook, "#!/bin/sh\nexit 0\n").expect("failed to write foreign hook");
+        assert!(matches!(
+            inspect(&ctx).expect("inspection should succeed").health,
+            GuardHealth::NeedsInstallLocal { .. }
+        ));
+
+        write_guard_intent(
+            &ctx,
+            GuardIntent::Wrapper {
+                framework: HookFramework::Unknown,
+            },
+        )
+        .expect("failed to write guard intent");
+        std::fs::write(&preserved, "#!/bin/sh\necho old\n").expect("failed to write preserved");
+        assert!(matches!(
+            inspect(&ctx).expect("inspection should succeed").health,
+            GuardHealth::NeedsRepairLocal { .. }
+        ));
     }
 
     #[test]
     fn remove_refuses_foreign_hook() {
         let (_tmp, ctx) = init_repo();
-        let hook = PathBuf::from(ctx.root.join(".git").join("hooks").join("pre-commit"));
+        let hook = ctx.root.join(".git").join("hooks").join("pre-commit");
         std::fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
         std::fs::write(&hook, "#!/bin/sh\nexit 0\n").expect("failed to write foreign hook");
 
