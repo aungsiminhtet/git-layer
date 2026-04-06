@@ -148,6 +148,35 @@ impl ExcludeFile {
             .collect()
     }
 
+    pub fn managed_entries(&self) -> Vec<Entry> {
+        self.managed
+            .iter()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || is_layer_internal(trimmed) {
+                    return None;
+                }
+
+                if let Some(value) = trimmed.strip_prefix(DISABLED_PREFIX) {
+                    let value = value.trim();
+                    if value.is_empty() || is_layer_internal(value) {
+                        None
+                    } else {
+                        Some(Entry {
+                            value: value.to_string(),
+                        })
+                    }
+                } else if trimmed.starts_with('#') {
+                    None
+                } else {
+                    Some(Entry {
+                        value: trimmed.to_string(),
+                    })
+                }
+            })
+            .collect()
+    }
+
     pub fn disabled_entry_set(&self) -> HashSet<String> {
         self.disabled_entries()
             .into_iter()
@@ -533,6 +562,23 @@ mod tests {
         assert_eq!(disabled.len(), 2);
         assert_eq!(disabled[0].value, "Agents.md");
         assert_eq!(disabled[1].value, ".claude/");
+    }
+
+    #[test]
+    fn managed_entries_include_active_and_disabled() {
+        let file = ExcludeFile {
+            prefix: Vec::new(),
+            managed: vec![
+                "CLAUDE.md".into(),
+                "# [off] Agents.md".into(),
+                "# regular comment".into(),
+            ],
+            suffix: Vec::new(),
+        };
+        let managed = file.managed_entries();
+        assert_eq!(managed.len(), 2);
+        assert_eq!(managed[0].value, "CLAUDE.md");
+        assert_eq!(managed[1].value, "Agents.md");
     }
 
     #[test]

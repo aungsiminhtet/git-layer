@@ -56,7 +56,7 @@ pub fn run() -> Result<i32> {
 
     if !tracked.is_empty() {
         println!(
-            "  {} Exposed ({}) — tracked files can't be hidden by layering:",
+            "  {} Tracked files still visible to Git ({}) — layer can't hide tracked files:",
             ui::exposed(),
             tracked.len()
         );
@@ -77,7 +77,7 @@ pub fn run() -> Result<i32> {
         if has_section {
             println!();
         }
-        println!("  {} Already layered:", ui::layered());
+        println!("  {} Already hidden by layer:", ui::layered());
         for item in &already_excluded {
             println!("    {} {}", ui::layered(), ui::dim_text(&item.path));
         }
@@ -88,7 +88,7 @@ pub fn run() -> Result<i32> {
         if has_section {
             println!();
         }
-        println!("  {} Already ignored by Git:", ui::info());
+        println!("  {} Already hidden by .gitignore:", ui::info());
         for item in &already_gitignored {
             println!("    {} {}", ui::info(), ui::dim_text(&item.path));
         }
@@ -103,7 +103,11 @@ pub fn run() -> Result<i32> {
     if !ui::is_stdout_tty() {
         // Non-TTY: list discovered files and exit
         println!();
-        println!("  {} Discovered ({}):", ui::discovered(), selectable.len());
+        println!(
+            "  {} Available to add ({}):",
+            ui::discovered(),
+            selectable.len()
+        );
         for item in &selectable {
             println!("    {} {} ({})", ui::discovered(), item.path, item.label);
         }

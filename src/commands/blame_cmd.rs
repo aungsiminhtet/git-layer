@@ -15,7 +15,7 @@ pub fn run(file: String) -> Result<i32> {
 
     let normalized = normalize_entry(&file);
     let exclude = ensure_exclude_file(&ctx.exclude_path)?;
-    let entries = exclude.entries();
+    let entries = exclude.managed_entries();
     let files = shadow::resolve_history_files(&ctx, &entries, Some(&shadow))?;
     if !files.iter().any(|path| path == &normalized) {
         println!("No history found for '{normalized}'.");

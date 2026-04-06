@@ -53,6 +53,11 @@ fn run_install(force: bool) -> Result<i32> {
             );
         }
     }
+    println!(
+        "  {} Protects layered files even while {} is active.",
+        ui::info(),
+        ui::brand("layer off")
+    );
     Ok(0)
 }
 
@@ -89,7 +94,7 @@ fn run_status() -> Result<i32> {
         }
         HookState::NotInstalled => {
             println!(
-                "  {} Guard: not installed ({})",
+                "  {} Guard: not installed — run {} to block accidental commits",
                 ui::exposed(),
                 ui::brand("layer guard")
             );
@@ -120,7 +125,7 @@ fn run_check() -> Result<i32> {
         writeln!(stderr, "    - {file}")?;
     }
     writeln!(stderr)?;
-    writeln!(stderr, "  These are local context files managed by layer.")?;
+    writeln!(stderr, "  These files are managed by layer.")?;
     writeln!(stderr)?;
     writeln!(stderr, "  Fix:")?;
     for file in &blocked {

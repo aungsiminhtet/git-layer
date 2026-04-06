@@ -15,11 +15,11 @@ pub fn run(file: Option<String>) -> Result<i32> {
     })?;
 
     let exclude = ensure_exclude_file(&ctx.exclude_path)?;
-    let entries = exclude.entries();
+    let entries = exclude.managed_entries();
     let files = shadow::resolve_history_files(&ctx, &entries, Some(&shadow))?;
 
     if files.is_empty() {
-        println!("No layered files to diff.");
+        println!("No files managed by layer are available to diff.");
         return Ok(2);
     }
 

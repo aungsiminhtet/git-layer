@@ -71,6 +71,16 @@ pub fn err_text(text: &str) -> String {
     style(text).red().to_string()
 }
 
+/// Layer state — green bold for ON.
+pub fn state_on() -> String {
+    style("ON").green().bold().to_string()
+}
+
+/// Layer state — red bold for OFF.
+pub fn state_off() -> String {
+    style("OFF").red().bold().to_string()
+}
+
 // ── Output helpers ─────────────────────────────────────────────
 
 /// Print to stderr with red "error:" prefix.

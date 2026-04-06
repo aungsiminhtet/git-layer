@@ -19,22 +19,22 @@ pub fn run(file: String, verbose: bool) -> Result<i32> {
         if git::is_local_exclude_source(&ctx.root, &ctx.exclude_path, &matched.source) {
             if tracked {
                 println!(
-                    "'{}' is {} — excluded but still tracked by git.",
+                    "'{}' is {} — hidden by layer, but still tracked by Git.",
                     normalized,
-                    ui::warn_text("exposed")
+                    ui::warn_text("visible to Git")
                 );
-                println!("  Layered in: .git/info/exclude (line {})", matched.line);
-                println!("  Tracked:  YES — this is why git still sees it");
+                println!("  Managed in: .git/info/exclude (line {})", matched.line);
+                println!("  Tracked:  YES — this is why Git still sees it");
                 println!("  Fix:      git rm --cached {}", normalized);
                 return finish(1, verbose);
             }
 
             println!(
-                "'{}' is {} — hidden from git.",
+                "'{}' is {} — hidden from Git.",
                 normalized,
-                ui::brand("layered")
+                ui::brand("managed by layer")
             );
-            println!("  Layered in: .git/info/exclude (line {})", matched.line);
+            println!("  Managed in: .git/info/exclude (line {})", matched.line);
             println!("  Tracked:   no");
             println!("  Exists:    {}", if exists { "yes" } else { "no" });
             return finish(0, verbose);
@@ -69,22 +69,22 @@ pub fn run(file: String, verbose: bool) -> Result<i32> {
 
     if tracked {
         println!(
-            "'{}' is {} — tracked and not layered.",
+            "'{}' is {} — tracked and not managed by layer.",
             normalized,
-            ui::warn_text("exposed")
+            ui::warn_text("visible to Git")
         );
-        println!("  Layered:  no");
+        println!("  Managed by layer:  no");
         println!("  Tracked:  yes");
         println!("  Exists:   {}", yes_no(exists));
         return finish(1, verbose);
     }
 
     println!(
-        "'{}' is {} — untracked and not in any layer.",
+        "'{}' is {} — untracked and not managed by layer.",
         normalized,
-        ui::brand("discovered")
+        ui::brand("available to add")
     );
-    println!("  Layered:  no");
+    println!("  Managed by layer:  no");
     println!("  Tracked:  no");
     println!("  Exists:   {}", yes_no(exists));
     println!("  Fix:      layer add {}", normalized);
@@ -114,7 +114,7 @@ fn finish(code: i32, verbose: bool) -> Result<i32> {
             "{}",
             ui::dim_text("How git decides to ignore files (checked in order):")
         );
-        println!("{}", ui::dim_text("  1. .git/info/exclude     — local to this repo clone, not shared (this is what layer manages)"));
+        println!("{}", ui::dim_text("  1. .git/info/exclude     — local to this repo clone, not shared (this is where layer stores entries)"));
         println!(
             "{}",
             ui::dim_text("  2. .gitignore            - tracked and shared with the team")

@@ -10,17 +10,19 @@ pub fn run(dry_run: bool) -> Result<i32> {
     let count = exclude.entries().len();
 
     if count == 0 {
-        println!("No layered entries. Nothing to clear.");
+        println!("No files are currently managed by layer. Nothing to clear.");
         return Ok(2);
     }
 
     if dry_run {
-        println!("Would remove all {count} entries.");
+        println!("Would remove all {count} entries from your local layer.");
         ui::print_dry_run_notice();
         return Ok(0);
     }
 
-    ui::print_warning(&format!("This will remove all {count} entries."));
+    ui::print_warning(&format!(
+        "This will remove all {count} entries from your local layer."
+    ));
 
     ui::require_tty(
         "interactive confirmation requires a TTY. Re-run in a terminal or use --dry-run",
@@ -39,6 +41,6 @@ pub fn run(dry_run: bool) -> Result<i32> {
     exclude.clear_managed();
     exclude.write(&ctx.exclude_path)?;
 
-    println!("  {} All entries removed.", ui::ok());
+    println!("  {} All entries removed from your local layer.", ui::ok());
     Ok(0)
 }

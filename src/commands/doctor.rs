@@ -14,7 +14,7 @@ pub fn run() -> Result<i32> {
 
     if entries.is_empty() {
         println!(
-            "No layered entries. Run {} or {} to get started.",
+            "No files are currently managed by layer. Run {} or {} to get started.",
             ui::brand("layer add"),
             ui::brand("layer scan")
         );
@@ -43,7 +43,7 @@ pub fn run() -> Result<i32> {
         match diagnosis.kind {
             DiagnosisKind::Layered => {
                 n_layered += 1;
-                println!("  {} {} — layered", ui::layered(), entry.value);
+                println!("  {} {} — hidden from Git", ui::layered(), entry.value);
             }
             DiagnosisKind::Exposed => {
                 n_exposed += 1;
@@ -84,10 +84,10 @@ pub fn run() -> Result<i32> {
     print!("  ");
     let mut parts = Vec::new();
     if n_layered > 0 {
-        parts.push(format!("{} layered", n_layered));
+        parts.push(format!("{} hidden by layer", n_layered));
     }
     if n_exposed > 0 {
-        parts.push(ui::warn_text(&format!("{} exposed", n_exposed)));
+        parts.push(ui::warn_text(&format!("{} visible to Git", n_exposed)));
     }
     if n_stale > 0 {
         parts.push(ui::err_text(&format!("{} stale", n_stale)));
@@ -168,12 +168,12 @@ fn diagnose_entry(
             kind: DiagnosisKind::Exposed,
             message: if git::contains_glob(entry) {
                 format!(
-                    "exposed — {} files match, {} tracked",
+                    "visible to Git — {} files match, {} tracked",
                     resolved.total_matches,
                     resolved.tracked_matches.len()
                 )
             } else {
-                "exposed — tracked by git".to_string()
+                "visible to Git — tracked by Git".to_string()
             },
             details,
         });

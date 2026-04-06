@@ -16,7 +16,7 @@ pub fn run() -> Result<i32> {
 
     if entries.is_empty() && disabled.is_empty() && user_entries.is_empty() {
         println!(
-            "No layered entries. Run {} or {} to get started.",
+            "No files are currently managed by layer. Run {} or {} to get started.",
             ui::brand("layer add"),
             ui::brand("layer scan")
         );
@@ -87,7 +87,7 @@ pub fn run() -> Result<i32> {
                 "  {} {}  {}",
                 ui::disabled(),
                 name,
-                ui::dim_text("(disabled)")
+                ui::dim_text("(visible to Git)")
             );
         }
     }
@@ -131,11 +131,11 @@ fn classify_literal(repo_root: &Path, entry: &str, tracked: &HashSet<String>) ->
     let is_tracked = tracked.contains(entry);
 
     if is_tracked {
-        return EntryStatus::Exposed(format!("exposed — git rm --cached {entry}"));
+        return EntryStatus::Exposed(format!("visible to Git — run git rm --cached {entry}"));
     }
 
     if exists {
-        return EntryStatus::Layered("layered".to_string());
+        return EntryStatus::Layered("hidden from Git".to_string());
     }
 
     EntryStatus::Stale("stale".to_string())
@@ -161,13 +161,13 @@ fn classify_directory(repo_root: &Path, entry: &str, tracked: &HashSet<String>) 
     let tracked_count = tracked.iter().filter(|p| p.starts_with(entry)).count();
     if tracked_count > 0 {
         return EntryStatus::Exposed(format!(
-            "exposed — {} tracked (git rm --cached -r {})",
+            "visible to Git — {} tracked (git rm --cached -r {})",
             tracked_count,
             entry.trim_end_matches('/')
         ));
     }
 
-    EntryStatus::Layered(format!("layered ({count} files)"))
+    EntryStatus::Layered(format!("hidden from Git ({count} files)"))
 }
 
 fn classify_pattern(
@@ -182,8 +182,8 @@ fn classify_pattern(
     }
 
     if summary.tracked_count() > 0 {
-        return EntryStatus::Exposed("exposed — tracked files match".to_string());
+        return EntryStatus::Exposed("visible to Git — tracked files match".to_string());
     }
 
-    EntryStatus::Layered(format!("layered ({} files)", summary.total))
+    EntryStatus::Layered(format!("hidden from Git ({} files)", summary.total))
 }

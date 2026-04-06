@@ -12,7 +12,9 @@ pub fn run() -> Result<i32> {
     let ctx = git::ensure_repo()?;
     let exclude = ensure_exclude_file(&ctx.exclude_path)?;
     let entries = exclude.entries();
+    let managed_entries = exclude.managed_entries();
     let disabled = exclude.disabled_entries();
+    let layer_is_off = !disabled.is_empty();
 
     let tracked = git::list_tracked(&ctx.root)?;
     let pattern_index = git::build_pattern_match_index(&ctx.root, &ctx.exclude_path, &tracked)?;
@@ -33,10 +35,14 @@ pub fn run() -> Result<i32> {
 
     let excluded_set = exclude.managed_entry_set();
     let discovered_items = scan::discover_known_files_with_tracked(&ctx, &excluded_set, &tracked)?;
-    let gitignored_count = discovered_items
+    let mut gitignored: Vec<_> = discovered_items
         .iter()
         .filter(|item| !item.already_excluded && item.is_gitignored)
-        .count();
+        .map(|item| item.path.clone())
+        .collect();
+    gitignored.sort();
+    gitignored.dedup();
+    let gitignored_count = gitignored.len();
     let not_excluded: Vec<_> = discovered_items
         .into_iter()
         .filter(|item| !item.already_excluded && !item.is_gitignored)
@@ -59,9 +65,12 @@ pub fn run() -> Result<i32> {
     let mut history_info = None;
     let mut modified_files = Vec::new();
     let guard_state = crate::guard::hook_state(&ctx)?;
+    let mut printed_guard = false;
     if let Some(shadow) = ShadowRepo::open(&ctx.root) {
         history_info = shadow.last_snapshot_info().ok().flatten();
-        if let Ok(files) = crate::shadow::resolve_history_files(&ctx, &entries, Some(&shadow)) {
+        if let Ok(files) =
+            crate::shadow::resolve_history_files(&ctx, &managed_entries, Some(&shadow))
+        {
             modified_files = shadow.pending_snapshot_files(&files).unwrap_or_default();
         }
     }
@@ -70,7 +79,6 @@ pub fn run() -> Result<i32> {
         && exposed.is_empty()
         && discovered.is_empty()
         && tracked_ctx.is_empty()
-        && history_info.is_none()
         && modified_files.is_empty()
     {
         if layered.is_empty() && gitignored_count == 0 {
@@ -81,49 +89,90 @@ pub fn run() -> Result<i32> {
             return Ok(0);
         } else if layered.is_empty() {
             println!(
-                "  {} All clear — {} already ignored by .gitignore.",
-                ui::ok(),
-                gitignored_count
+                "  {} {} known context {} already hidden by .gitignore.",
+                ui::info(),
+                gitignored_count,
+                if gitignored_count == 1 {
+                    "file is"
+                } else {
+                    "files are"
+                }
             );
+            return Ok(0);
         } else if gitignored_count > 0 {
+            println!("  {} Layer: {}", ui::ok(), ui::state_on());
             println!(
-                "  {} {} files in your local layer. ({} others ignored by .gitignore)",
-                ui::ok(),
+                "  {} {} {} hidden by layer.",
+                ui::info(),
                 layered.len(),
-                gitignored_count
+                if layered.len() == 1 {
+                    "file is"
+                } else {
+                    "files are"
+                },
             );
-        } else {
             println!(
-                "  {} {} files in your local layer.",
-                ui::ok(),
-                layered.len()
+                "  {} {} known context {} already hidden by .gitignore.",
+                ui::info(),
+                gitignored_count,
+                if gitignored_count == 1 {
+                    "file is"
+                } else {
+                    "files are"
+                }
             );
+            println!();
+            print_guard_status_line(guard_state);
+            return Ok(0);
+        } else {
+            println!("  {} Layer: {}", ui::ok(), ui::state_on());
+            println!(
+                "  {} {} {} hidden by layer.",
+                ui::info(),
+                layered.len(),
+                if layered.len() == 1 {
+                    "file is"
+                } else {
+                    "files are"
+                }
+            );
+            println!();
+            print_guard_status_line(guard_state);
+            return Ok(0);
         }
     }
 
     let mut has_section = false;
 
-    let all_active_clear =
-        layered.is_empty() && exposed.is_empty() && discovered.is_empty() && tracked_ctx.is_empty();
-    if !disabled.is_empty() && all_active_clear {
-        println!(
-            "  {} Layering is off — {} disabled ({}).",
-            ui::disabled(),
-            disabled.len(),
-            ui::brand("layer on"),
-        );
-        if gitignored_count > 0 {
-            println!(
-                "  {} {} already ignored by .gitignore.",
-                ui::info(),
-                gitignored_count,
-            );
-        }
+    if layer_is_off {
+        println!("  {} Layer: {}", ui::disabled(), ui::state_off());
+        has_section = true;
+    } else if !entries.is_empty() {
+        println!("  {} Layer: {}", ui::ok(), ui::state_on());
         has_section = true;
     }
 
+    let all_active_clear =
+        layered.is_empty() && exposed.is_empty() && discovered.is_empty() && tracked_ctx.is_empty();
+    if !disabled.is_empty() && all_active_clear {
+        println!();
+        println!(
+            "  {} {} layered {} currently visible to Git. Run {} before staging or committing.",
+            ui::info(),
+            disabled.len(),
+            if disabled.len() == 1 {
+                "file is"
+            } else {
+                "files are"
+            },
+            ui::brand("layer on"),
+        );
+        print_guard_status_line(guard_state);
+        printed_guard = true;
+    }
+
     if !layered.is_empty() {
-        println!("  {} Layered ({}):", ui::layered(), layered.len());
+        println!("  {} Hidden by layer ({}):", ui::layered(), layered.len());
         for entry in &layered {
             println!("    {}", ui::dim_text(entry));
         }
@@ -134,7 +183,7 @@ pub fn run() -> Result<i32> {
         if has_section {
             println!();
         }
-        println!("  {} Disabled ({}):", ui::disabled(), disabled.len());
+        println!("  {} Visible to Git ({}):", ui::disabled(), disabled.len());
         for entry in &disabled {
             println!("    {}", ui::dim_text(&entry.value));
         }
@@ -145,7 +194,7 @@ pub fn run() -> Result<i32> {
         if has_section {
             println!();
         }
-        print_exposed_section("Exposed", &exposed);
+        print_exposed_section("Still visible to Git", &exposed);
         has_section = true;
     }
 
@@ -154,9 +203,9 @@ pub fn run() -> Result<i32> {
             println!();
         }
         println!(
-            "  {} {}:",
+            "  {} Available to add ({}):",
             ui::discovered(),
-            ui::warn_text(&format!("Discovered ({})", discovered.len()))
+            discovered.len()
         );
         let width = discovered.iter().map(|e| e.len()).max().unwrap_or(0);
         for entry in &discovered {
@@ -175,7 +224,7 @@ pub fn run() -> Result<i32> {
             println!();
         }
         println!(
-            "  {} Exposed — tracked ({}):",
+            "  {} Tracked files still visible to Git ({}):",
             ui::exposed(),
             tracked_ctx.len()
         );
@@ -188,14 +237,32 @@ pub fn run() -> Result<i32> {
                 width = width
             );
         }
+        has_section = true;
     }
 
-    if let Some(info) = history_info {
+    if !gitignored.is_empty() {
         if has_section {
             println!();
         }
-        println!("  {} History: {info}", ui::dim_text("~"));
+        println!(
+            "  {} Already hidden by .gitignore ({}):",
+            ui::info(),
+            gitignored.len()
+        );
+        for entry in &gitignored {
+            println!("    {}", ui::dim_text(entry));
+        }
         has_section = true;
+    }
+
+    if !modified_files.is_empty() {
+        if let Some(info) = history_info {
+            if has_section {
+                println!();
+            }
+            println!("  {} History: {info}", ui::dim_text("~"));
+            has_section = true;
+        }
     }
 
     if !modified_files.is_empty() {
@@ -203,7 +270,7 @@ pub fn run() -> Result<i32> {
             println!();
         }
         println!(
-            "  {} Modified ({}) — run {}:",
+            "  {} Modified since last snapshot ({}) — run {}:",
             ui::discovered(),
             modified_files.len(),
             ui::brand("layer snapshot"),
@@ -214,16 +281,28 @@ pub fn run() -> Result<i32> {
         has_section = true;
     }
 
-    if has_section {
+    if has_section && !printed_guard {
         println!();
     }
+    if !printed_guard {
+        print_guard_status_line(guard_state);
+    }
+
+    if !exposed.is_empty() || !tracked_ctx.is_empty() {
+        return Ok(1);
+    }
+
+    Ok(0)
+}
+
+fn print_guard_status_line(guard_state: HookState) {
     match guard_state {
         HookState::Installed => {
             println!("  {} Guard: pre-commit hook active", ui::ok());
         }
         HookState::NotInstalled => {
             println!(
-                "  {} Guard: not installed ({})",
+                "  {} Guard: not installed — run {} to block accidental commits",
                 ui::exposed(),
                 ui::brand("layer guard")
             );
@@ -235,12 +314,6 @@ pub fn run() -> Result<i32> {
             );
         }
     }
-
-    if !exposed.is_empty() || !tracked_ctx.is_empty() {
-        return Ok(1);
-    }
-
-    Ok(0)
 }
 
 fn classify_entry(
@@ -265,7 +338,20 @@ fn classify_entry(
 
         if !tracked_files.is_empty() {
             tracked_files.sort();
-            let summary = format!("{} tracked:", tracked_files.len());
+            let summary = format!(
+                "{} tracked {} — remove {} from Git first",
+                tracked_files.len(),
+                if tracked_files.len() == 1 {
+                    "file"
+                } else {
+                    "files"
+                },
+                if tracked_files.len() == 1 {
+                    "it"
+                } else {
+                    "them"
+                }
+            );
             exposed.push((entry.to_string(), summary, tracked_files));
             return;
         }
@@ -283,7 +369,7 @@ fn classify_entry(
         if summary.tracked_count() > 0 {
             exposed.push((
                 entry.to_string(),
-                "tracked — exclude has no effect".to_string(),
+                "tracked files — remove them from Git first".to_string(),
                 Vec::new(),
             ));
             return;
@@ -296,7 +382,7 @@ fn classify_entry(
     if tracked.contains(entry) {
         exposed.push((
             entry.to_string(),
-            format!("git rm --cached {entry}"),
+            format!("tracked — run git rm --cached {entry}"),
             Vec::new(),
         ));
         return;

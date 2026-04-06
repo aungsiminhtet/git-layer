@@ -7,17 +7,17 @@ use anyhow::Result;
 pub fn run(files: Vec<String>, message: Option<String>) -> Result<i32> {
     let ctx = git::ensure_repo()?;
     let exclude = ensure_exclude_file(&ctx.exclude_path)?;
-    let entries = exclude.entries();
+    let entries = exclude.managed_entries();
 
     if entries.is_empty() {
-        println!("No layered entries. Nothing to snapshot.");
+        println!("No files are currently managed by layer. Nothing to snapshot.");
         return Ok(2);
     }
 
     let shadow = ShadowRepo::open(&ctx.root);
     let all_files = shadow::resolve_history_files(&ctx, &entries, shadow.as_ref())?;
     if all_files.is_empty() {
-        println!("No layered files to snapshot.");
+        println!("No files managed by layer are available to snapshot.");
         return Ok(2);
     }
 
@@ -33,7 +33,7 @@ pub fn run(files: Vec<String>, message: Option<String>) -> Result<i32> {
             .filter(|file| requested.contains(file))
             .collect();
         if matched.is_empty() {
-            println!("None of the specified files are layered.");
+            println!("None of the specified files are managed by layer.");
             return Ok(2);
         }
         matched

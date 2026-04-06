@@ -76,9 +76,15 @@ fn add_normalizes_and_dedupes() {
         .args(["add", "./CLAUDE.md", "./CLAUDE.md", ".claude"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Layered 'CLAUDE.md'"))
-        .stdout(predicate::str::contains("already layered"))
-        .stdout(predicate::str::contains("Layered '.claude/'"));
+        .stdout(predicate::str::contains(
+            "Added 'CLAUDE.md' to your local layer",
+        ))
+        .stdout(predicate::str::contains(
+            "'CLAUDE.md' is already managed by layer",
+        ))
+        .stdout(predicate::str::contains(
+            "Added '.claude/' to your local layer",
+        ));
 
     let exclude =
         fs::read_to_string(exclude_path(repo.path())).expect("failed to read exclude file");
@@ -120,7 +126,9 @@ fn rm_direct_removes_exact_and_reports_missing() {
         .args(["rm", "CLAUDE.md"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Removed 'CLAUDE.md'"));
+        .stdout(predicate::str::contains(
+            "Removed 'CLAUDE.md' from your local layer",
+        ));
 
     let mut missing_cmd = Command::new(assert_cmd::cargo::cargo_bin!("layer"));
     missing_cmd
@@ -128,7 +136,9 @@ fn rm_direct_removes_exact_and_reports_missing() {
         .args(["rm", "not-there.md"])
         .assert()
         .code(2)
-        .stdout(predicate::str::contains("'not-there.md' is not layered"));
+        .stdout(predicate::str::contains(
+            "'not-there.md' is not managed by layer",
+        ));
 }
 
 #[test]
@@ -155,7 +165,7 @@ fn why_reports_excluded_and_tracked_state() {
         .args(["why", "config.md"])
         .assert()
         .code(1)
-        .stdout(predicate::str::contains("exposed"))
+        .stdout(predicate::str::contains("visible to Git"))
         .stdout(predicate::str::contains("git rm --cached config.md"));
 }
 
@@ -174,14 +184,19 @@ fn guard_uses_git_hook_path_and_status_round_trip() {
         .args(["guard", "--status"])
         .assert()
         .code(2)
-        .stdout(predicate::str::contains("Guard: not installed"));
+        .stdout(predicate::str::contains(
+            "Guard: not installed — run layer guard to block accidental commits",
+        ));
 
     Command::new(assert_cmd::cargo::cargo_bin!("layer"))
         .current_dir(repo.path())
         .arg("guard")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Guard installed"));
+        .stdout(predicate::str::contains("Guard installed"))
+        .stdout(predicate::str::contains(
+            "Protects layered files even while layer off is active",
+        ));
 
     let hook = pre_commit_hook_path(repo.path());
     let content = fs::read_to_string(&hook).expect("failed to read hook");
@@ -294,6 +309,7 @@ fn guard_hook_blocks_layered_file_and_off_stays_quiet_when_installed() {
         .arg("off")
         .assert()
         .success()
+        .stdout(predicate::str::contains("Guard active"))
         .stdout(predicate::str::contains("layer guard").not());
 
     Command::new("git")
@@ -367,7 +383,9 @@ fn ls_empty_exclude_shows_hint() {
         .arg("ls")
         .assert()
         .code(2)
-        .stdout(predicate::str::contains("No layered entries"));
+        .stdout(predicate::str::contains(
+            "No files are currently managed by layer",
+        ));
 }
 
 #[test]
@@ -387,7 +405,7 @@ fn ls_shows_existing_entries_with_status() {
         .assert()
         .success()
         .stdout(predicate::str::contains("CLAUDE.md"))
-        .stdout(predicate::str::contains("layered"))
+        .stdout(predicate::str::contains("hidden from Git"))
         .stdout(predicate::str::contains("nonexistent.md"))
         .stdout(predicate::str::contains("stale"));
 }
@@ -415,7 +433,7 @@ fn ls_shows_tracked_warning() {
         .assert()
         .success()
         .stdout(predicate::str::contains("config.md"))
-        .stdout(predicate::str::contains("exposed"));
+        .stdout(predicate::str::contains("visible to Git"));
 }
 
 // --- doctor integration tests ---
@@ -429,7 +447,9 @@ fn doctor_empty_shows_hint() {
         .arg("doctor")
         .assert()
         .code(2)
-        .stdout(predicate::str::contains("No layered entries"));
+        .stdout(predicate::str::contains(
+            "No files are currently managed by layer",
+        ));
 }
 
 #[test]
@@ -448,8 +468,8 @@ fn doctor_healthy_entry() {
         .arg("doctor")
         .assert()
         .success()
-        .stdout(predicate::str::contains("layered"))
-        .stdout(predicate::str::contains("1 layered"));
+        .stdout(predicate::str::contains("hidden from Git"))
+        .stdout(predicate::str::contains("1 hidden by layer"));
 }
 
 #[test]
@@ -493,8 +513,8 @@ fn doctor_tracked_entry() {
         .arg("doctor")
         .assert()
         .code(1)
-        .stdout(predicate::str::contains("exposed"))
-        .stdout(predicate::str::contains("1 exposed"));
+        .stdout(predicate::str::contains("visible to Git"))
+        .stdout(predicate::str::contains("1 visible to Git"));
 }
 
 // --- scan integration tests ---
@@ -567,7 +587,9 @@ fn rm_dry_run_does_not_modify_file() {
         .args(["rm", "--dry-run", "CLAUDE.md"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Would remove 'CLAUDE.md'"))
+        .stdout(predicate::str::contains(
+            "Would remove 'CLAUDE.md' from your local layer",
+        ))
         .stdout(predicate::str::contains("dry run"));
 
     // Verify file was NOT modified
@@ -665,7 +687,7 @@ fn ls_shows_manual_entries() {
         .assert()
         .success()
         .stdout(predicate::str::contains("CLAUDE.md"))
-        .stdout(predicate::str::contains("layered"))
+        .stdout(predicate::str::contains("hidden from Git"))
         .stdout(predicate::str::contains("my-notes.txt"))
         .stdout(predicate::str::contains("(manual)"));
 }
@@ -764,8 +786,8 @@ fn off_disables_all_entries() {
         .arg("off")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Disabled CLAUDE.md"))
-        .stdout(predicate::str::contains("Disabled Agents.md"));
+        .stdout(predicate::str::contains("Now visible to Git: CLAUDE.md"))
+        .stdout(predicate::str::contains("Now visible to Git: Agents.md"));
 
     let content = fs::read_to_string(exclude_path(repo.path())).expect("read");
     assert!(content.contains("# [off] CLAUDE.md"));
@@ -788,8 +810,9 @@ fn on_enables_all_entries() {
         .arg("on")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Enabled CLAUDE.md"))
-        .stdout(predicate::str::contains("Enabled Agents.md"));
+        .stdout(predicate::str::contains("Now hidden from Git: CLAUDE.md"))
+        .stdout(predicate::str::contains("Now hidden from Git: Agents.md"))
+        .stdout(predicate::str::contains("hidden from Git again"));
 
     let content = fs::read_to_string(&exclude).expect("read");
     assert!(!content.contains("# [off]"));
@@ -812,7 +835,7 @@ fn off_specific_entry() {
         .args(["off", "CLAUDE.md"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Disabled CLAUDE.md"));
+        .stdout(predicate::str::contains("Now visible to Git: CLAUDE.md"));
 
     let content = fs::read_to_string(exclude_path(repo.path())).expect("read");
     assert!(content.contains("# [off] CLAUDE.md"));
@@ -835,7 +858,8 @@ fn on_specific_entry() {
         .args(["on", "CLAUDE.md"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Enabled CLAUDE.md"));
+        .stdout(predicate::str::contains("Now hidden from Git: CLAUDE.md"))
+        .stdout(predicate::str::contains("hidden from Git again"));
 
     let content = fs::read_to_string(&exclude).expect("read");
     assert!(content.contains("CLAUDE.md"));
@@ -851,7 +875,9 @@ fn off_nothing_to_disable_exits_2() {
         .arg("off")
         .assert()
         .code(2)
-        .stdout(predicate::str::contains("No active entries to disable"));
+        .stdout(predicate::str::contains(
+            "No layered files are currently hidden from Git",
+        ));
 }
 
 #[test]
@@ -863,7 +889,9 @@ fn on_nothing_to_enable_exits_2() {
         .arg("on")
         .assert()
         .code(2)
-        .stdout(predicate::str::contains("No disabled entries to enable"));
+        .stdout(predicate::str::contains(
+            "No layered files are currently visible to Git",
+        ));
 }
 
 #[test]
@@ -881,7 +909,9 @@ fn off_dry_run_does_not_modify() {
         .args(["off", "--dry-run"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Would disable CLAUDE.md"))
+        .stdout(predicate::str::contains(
+            "Would make CLAUDE.md visible to Git",
+        ))
         .stdout(predicate::str::contains("dry run"));
 
     let content = fs::read_to_string(exclude_path(repo.path())).expect("read");
@@ -907,7 +937,7 @@ fn on_dry_run_does_not_modify() {
         .args(["on", "--dry-run"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Would enable CLAUDE.md"))
+        .stdout(predicate::str::contains("Would hide CLAUDE.md from Git"))
         .stdout(predicate::str::contains("dry run"));
 
     let content = fs::read_to_string(&exclude).expect("read");
@@ -935,9 +965,9 @@ fn ls_shows_disabled_entries() {
         .assert()
         .success()
         .stdout(predicate::str::contains("CLAUDE.md"))
-        .stdout(predicate::str::contains("layered"))
+        .stdout(predicate::str::contains("hidden from Git"))
         .stdout(predicate::str::contains("Agents.md"))
-        .stdout(predicate::str::contains("(disabled)"));
+        .stdout(predicate::str::contains("(visible to Git)"));
 }
 
 #[test]
@@ -962,7 +992,10 @@ fn status_does_not_show_disabled_entries_as_discovered() {
         .arg("status")
         .assert()
         .success()
-        .stdout(predicate::str::contains("1 disabled"))
+        .stdout(predicate::str::contains("Layer: OFF"))
+        .stdout(predicate::str::contains(
+            "1 layered file is currently visible to Git",
+        ))
         .stdout(predicate::str::contains("Discovered").not())
         .stdout(predicate::str::contains("layer add CLAUDE.md").not());
 }
@@ -997,14 +1030,64 @@ fn status_off_state_hides_preview_details() {
         .arg("status")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Layering is off"))
-        .stdout(predicate::str::contains("Disabled (2):"))
+        .stdout(predicate::str::contains("Layer: OFF"))
+        .stdout(predicate::str::contains("Visible to Git (2):"))
         .stdout(predicate::str::contains("CLAUDE.md"))
         .stdout(predicate::str::contains("docs/"))
         .stdout(predicate::str::contains("Preview after layer on:").not())
-        .stdout(predicate::str::contains("Exposed (1):").not())
+        .stdout(predicate::str::contains("Still visible to Git (1):").not())
         .stdout(predicate::str::contains("git rm --cached docs/tracked.md").not())
         .stdout(predicate::str::contains("All clear").not());
+}
+
+#[test]
+fn status_shows_layer_on_when_entries_are_hidden() {
+    let repo = init_repo();
+    fs::write(repo.path().join("CLAUDE.md"), "notes").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Layer: ON"))
+        .stdout(predicate::str::contains("1 file is hidden by layer"))
+        .stdout(predicate::str::contains(
+            "Guard: not installed — run layer guard to block accidental commits",
+        ));
+}
+
+#[test]
+fn status_hides_history_when_no_pending_changes() {
+    let repo = init_repo();
+    fs::write(repo.path().join("CLAUDE.md"), "notes").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("snapshot")
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Layer: ON"))
+        .stdout(predicate::str::contains("History:").not())
+        .stdout(predicate::str::contains("Modified since last snapshot").not());
 }
 
 #[test]
@@ -1048,7 +1131,9 @@ fn add_dry_run_does_not_write() {
         .args(["add", "--dry-run", "CLAUDE.md"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Would layer 'CLAUDE.md'"))
+        .stdout(predicate::str::contains(
+            "Would add 'CLAUDE.md' to your local layer",
+        ))
         .stdout(predicate::str::contains("dry run"));
 
     // Verify file was NOT created with the entry
@@ -1217,7 +1302,7 @@ fn status_reports_deleted_layered_file_as_modified() {
         .assert()
         .success()
         .stdout(predicate::str::contains("History:"))
-        .stdout(predicate::str::contains("Modified (1)"))
+        .stdout(predicate::str::contains("Modified since last snapshot (1)"))
         .stdout(predicate::str::contains("CLAUDE.md"));
 }
 
@@ -1252,8 +1337,50 @@ fn status_reports_new_layered_file_as_modified_after_history_started() {
         .assert()
         .success()
         .stdout(predicate::str::contains("History:"))
-        .stdout(predicate::str::contains("Modified (1)"))
+        .stdout(predicate::str::contains("Modified since last snapshot (1)"))
         .stdout(predicate::str::contains("B.md"));
+}
+
+#[test]
+fn status_and_snapshot_work_while_layer_is_off() {
+    let repo = init_repo();
+    fs::write(repo.path().join("CLAUDE.md"), "v1\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["add", "CLAUDE.md"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("snapshot")
+        .assert()
+        .success();
+
+    fs::write(repo.path().join("CLAUDE.md"), "v2\n").expect("write");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("off")
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Layer: OFF"))
+        .stdout(predicate::str::contains("Modified since last snapshot (1)"))
+        .stdout(predicate::str::contains("CLAUDE.md"));
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .arg("snapshot")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Snapshot created"));
 }
 
 #[test]
@@ -1280,7 +1407,7 @@ fn status_does_not_stage_shadow_changes() {
         .arg("status")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Modified (1)"))
+        .stdout(predicate::str::contains("Modified since last snapshot (1)"))
         .stdout(predicate::str::contains("CLAUDE.md"));
 
     Command::new("git")

@@ -11,7 +11,7 @@ pub fn run(files: Vec<String>, dry_run: bool) -> Result<i32> {
     let entries = exclude.entries();
 
     if entries.is_empty() {
-        println!("No layered entries to remove.");
+        println!("No files are currently managed by layer.");
         return Ok(2);
     }
 
@@ -19,7 +19,10 @@ pub fn run(files: Vec<String>, dry_run: bool) -> Result<i32> {
         ui::require_tty("interactive mode requires a TTY. Use 'layer rm <files...>' instead")?;
 
         let items: Vec<String> = entries.iter().map(|e| e.value.clone()).collect();
-        println!("{}", ui::heading("Select entries to remove"));
+        println!(
+            "{}",
+            ui::heading("Select files to remove from your local layer")
+        );
         let theme = ui::layer_theme();
         ui::print_select_hint();
         let selections = MultiSelect::with_theme(&theme)
@@ -32,7 +35,7 @@ pub fn run(files: Vec<String>, dry_run: bool) -> Result<i32> {
         };
 
         if selected.is_empty() {
-            println!("No entries selected.");
+            println!("No files selected.");
             return Ok(2);
         }
 
@@ -43,7 +46,10 @@ pub fn run(files: Vec<String>, dry_run: bool) -> Result<i32> {
 
         if dry_run {
             for item in &targets {
-                println!("  {} Would remove '{item}'", ui::info());
+                println!(
+                    "  {} Would remove '{item}' from your local layer",
+                    ui::info()
+                );
             }
             ui::print_dry_run_notice();
             return Ok(0);
@@ -56,7 +62,7 @@ pub fn run(files: Vec<String>, dry_run: bool) -> Result<i32> {
 
         exclude.write(&ctx.exclude_path)?;
         for item in &removed {
-            println!("  {} Removed '{item}'", ui::ok());
+            println!("  {} Removed '{item}' from your local layer", ui::ok());
         }
 
         return Ok(0);
@@ -71,7 +77,7 @@ pub fn run(files: Vec<String>, dry_run: bool) -> Result<i32> {
 
     for target in &targets {
         if !current.contains(target) {
-            println!("  '{target}' is not layered");
+            println!("  '{target}' is not managed by layer");
         }
     }
 
@@ -89,7 +95,10 @@ pub fn run(files: Vec<String>, dry_run: bool) -> Result<i32> {
 
     if dry_run {
         for target in &found {
-            println!("  {} Would remove '{target}'", ui::info());
+            println!(
+                "  {} Would remove '{target}' from your local layer",
+                ui::info()
+            );
         }
         ui::print_dry_run_notice();
         return Ok(0);
@@ -97,7 +106,7 @@ pub fn run(files: Vec<String>, dry_run: bool) -> Result<i32> {
 
     let removed = exclude.remove_exact(&found);
     for item in &removed {
-        println!("  {} Removed '{item}'", ui::ok());
+        println!("  {} Removed '{item}' from your local layer", ui::ok());
     }
 
     exclude.write(&ctx.exclude_path)?;

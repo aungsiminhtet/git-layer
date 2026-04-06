@@ -60,14 +60,17 @@ pub fn apply_add_entries(
         }
 
         if known_entries.contains(&normalized) {
-            println!("  {} '{normalized}' already layered", ui::info());
+            println!(
+                "  {} '{normalized}' is already managed by layer",
+                ui::info()
+            );
             summary.skipped += 1;
             continue;
         }
 
         if git::is_tracked(&ctx.root, &normalized)? {
             ui::print_warning(&format!(
-                "'{normalized}' is tracked by Git — layering won't hide it until untracked"
+                "'{normalized}' is tracked by Git — layer cannot hide it until you untrack it"
             ));
             println!(
                 "  {}",
@@ -76,10 +79,13 @@ pub fn apply_add_entries(
         }
 
         if dry_run {
-            println!("  {} Would layer '{normalized}'", ui::discovered());
+            println!(
+                "  {} Would add '{normalized}' to your local layer",
+                ui::discovered()
+            );
         } else {
             exclude.append_entry(&normalized);
-            println!("  {} Layered '{normalized}'", ui::ok());
+            println!("  {} Added '{normalized}' to your local layer", ui::ok());
         }
         known_entries.insert(normalized);
         summary.added += 1;
