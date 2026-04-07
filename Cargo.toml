@@ -1,6 +1,6 @@
 [package]
 name = "git-layer"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 rust-version = "1.77"
 description = "Manage .git/info/exclude so your personal AI files stay out of git — without touching .gitignore."
