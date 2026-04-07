@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 pub const GUARD_START: &str = "# layer-guard-start";
 pub const GUARD_END: &str = "# layer-guard-end";
-pub const MANUAL_MARKER: &str = "# layer-guard-manual";
+const MANUAL_MARKER: &str = "# layer-guard-manual";
 const GUARD_CHECK_COMMAND: &str = "layer guard --check";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
