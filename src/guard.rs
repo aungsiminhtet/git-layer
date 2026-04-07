@@ -259,7 +259,7 @@ pub fn inspect(ctx: &RepoContext) -> Result<GuardInspection> {
         None if local => ObservedHook::MissingLocal,
         None => ObservedHook::MissingExternal,
         Some(content)
-            if content.contains(GUARD_START) || content.contains(GUARD_CHECK_COMMAND) =>
+            if content.contains(GUARD_START) || has_uncommented_guard_check(content) =>
         {
             ObservedHook::ContainsGuard { preserved_exists }
         }
@@ -307,7 +307,7 @@ pub fn inspect(ctx: &RepoContext) -> Result<GuardInspection> {
                 }
             }
         }
-        Some(content) if content.contains(GUARD_CHECK_COMMAND) => {
+        Some(content) if has_uncommented_guard_check(content) => {
             GuardHealth::ActiveManual { local, framework }
         }
         Some(_) if local => match intent {
@@ -502,10 +502,17 @@ fn detect_framework(
     HookFramework::Unknown
 }
 
+fn has_uncommented_guard_check(content: &str) -> bool {
+    content.lines().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.starts_with('#') && trimmed.contains(GUARD_CHECK_COMMAND)
+    })
+}
+
 fn lefthook_config_contains_guard(ctx: &RepoContext) -> bool {
     for name in &["lefthook.yml", "lefthook.yaml"] {
         if let Ok(content) = fs::read_to_string(ctx.root.join(name)) {
-            if content.contains(GUARD_CHECK_COMMAND) {
+            if has_uncommented_guard_check(&content) {
                 return true;
             }
         }
@@ -941,6 +948,26 @@ mod tests {
             inspect(&ctx).expect("inspection should succeed").health,
             GuardHealth::NeedsRepairLocal { .. }
         ));
+    }
+
+    #[test]
+    fn commented_out_guard_check_is_not_detected_as_active() {
+        let (_tmp, ctx) = init_repo();
+        let hook = ctx.root.join(".git").join("hooks").join("pre-commit");
+        std::fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+
+        std::fs::write(
+            &hook,
+            "#!/bin/sh\n# layer guard --check || exit $?\necho 'other stuff'\n",
+        )
+        .expect("failed to write hook");
+
+        let inspection = inspect(&ctx).expect("inspection should succeed");
+        assert!(
+            matches!(inspection.health, GuardHealth::NeedsInstallLocal { .. }),
+            "expected NeedsInstallLocal for commented-out guard, got {:?}",
+            inspection.health,
+        );
     }
 
     #[test]
