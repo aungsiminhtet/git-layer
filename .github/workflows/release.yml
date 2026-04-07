@@ -259,7 +259,7 @@ jobs:
       - name: "Download GitHub Artifacts"
         uses: actions/download-artifact@v7
         with:
-          pattern: artifacts-*
+          pattern: artifacts-build-*
           path: artifacts
           merge-multiple: true
       - name: Cleanup
@@ -276,7 +276,7 @@ jobs:
           # Write and read notes from a file to avoid quoting breaking things
           echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
 
-          gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+          gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/* dist-manifest.json
 
   publish-homebrew-formula:
     needs:
@@ -299,7 +299,7 @@ jobs:
       - name: Fetch homebrew formulae
         uses: actions/download-artifact@v7
         with:
-          pattern: artifacts-*
+          pattern: artifacts-build-*
           path: Formula/
           merge-multiple: true
       # This is extra complex because you can make your Formula name not match your app name
