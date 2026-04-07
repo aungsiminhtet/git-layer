@@ -260,43 +260,11 @@ fn run_remove() -> Result<i32> {
 fn run_status() -> Result<i32> {
     let ctx = git::ensure_repo()?;
     let inspection = guard::inspect(&ctx)?;
-    match inspection.health {
-        GuardHealth::ActiveDirect => {
-            println!("  {} Guard: pre-commit hook active", ui::ok());
-            Ok(0)
-        }
-        GuardHealth::ActiveWrapper { preserved, .. } => {
-            println!("  {} Guard: pre-commit hook active", ui::ok());
-            println!(
-                "  {} Chaining existing pre-commit hook: {}",
-                ui::info(),
-                ui::dim_text(&preserved.display().to_string())
-            );
-            Ok(0)
-        }
-        GuardHealth::ActiveManual { framework, .. } => {
-            println!("  {} Guard: active via existing pre-commit hook", ui::ok());
-            if let Some(label) = framework.label() {
-                println!("  {} Detected {}", ui::info(), ui::brand(label));
-            }
-            Ok(0)
-        }
-        GuardHealth::Inactive => {
-            println!(
-                "  {} Guard: not installed — run {} to block accidental commits",
-                ui::exposed(),
-                ui::brand("layer guard")
-            );
-            Ok(2)
-        }
-        GuardHealth::NeedsInstallLocal { .. }
-        | GuardHealth::NeedsManualExternal { .. }
-        | GuardHealth::NeedsRepairLocal { .. }
-        | GuardHealth::Broken { .. } => {
-            println!("  {} {}", ui::exposed(), health_status_message(&inspection));
-            Ok(1)
-        }
+    let output = guard::status_output(&inspection);
+    for line in &output.lines {
+        println!("  {} {}", line.indicator, line.text);
     }
+    Ok(output.exit_code)
 }
 
 fn run_check() -> Result<i32> {
@@ -463,57 +431,6 @@ fn print_manual_instructions(
         );
     }
     Ok(())
-}
-
-fn health_status_message(inspection: &guard::GuardInspection) -> String {
-    match &inspection.health {
-        GuardHealth::NeedsRepairLocal { .. } => format!(
-            "Guard: replaced by another hook installer — run {} to restore it",
-            ui::brand("layer guard --wrapper")
-        ),
-        GuardHealth::NeedsInstallLocal { framework } => match framework {
-            HookFramework::PreCommit => format!(
-                "Guard: not installed — run {} to wrap the existing Python pre-commit hook",
-                ui::brand("layer guard")
-            ),
-            _ => format!(
-                "Guard: not installed — run {} to set it up with the existing pre-commit hook",
-                ui::brand("layer guard")
-            ),
-        },
-        GuardHealth::NeedsManualExternal { framework } => match framework {
-            HookFramework::Husky => format!(
-                "Guard: not installed — run {} to add it to {}",
-                ui::brand("layer guard --manual"),
-                ui::brand(".husky/pre-commit")
-            ),
-            HookFramework::Lefthook => format!(
-                "Guard: not installed — run {} to add it to {}",
-                ui::brand("layer guard --manual"),
-                ui::brand("lefthook.yml")
-            ),
-            _ => format!(
-                "Guard: not installed — run {} for manual setup with the existing pre-commit hook",
-                ui::brand("layer guard --manual")
-            ),
-        },
-        GuardHealth::Broken { local, reason, .. } => match (local, reason) {
-            (false, guard::BrokenReason::MissingExpectedHook) => format!(
-                "Guard: expected hook is managed outside .git — run {} to repair it",
-                ui::brand("layer guard --manual")
-            ),
-            (_, guard::BrokenReason::MissingExpectedHook) => format!(
-                "Guard: expected hook is missing — run {} to restore it",
-                ui::brand("layer guard")
-            ),
-            (_, guard::BrokenReason::MissingPreservedHook) => format!(
-                "Guard: preserved original hook is missing — run {} or {} to repair it",
-                ui::brand("layer guard --remove"),
-                ui::brand("layer guard --wrapper")
-            ),
-        },
-        _ => "Guard: pre-commit hook active".to_string(),
-    }
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use crate::exclude_file::ensure_exclude_file;
 use crate::git::{self, RepoContext};
 use crate::matching::wildcard_match;
+use crate::ui;
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashSet;
 use std::fs;
@@ -9,6 +10,7 @@ use std::path::{Path, PathBuf};
 pub const GUARD_START: &str = "# layer-guard-start";
 pub const GUARD_END: &str = "# layer-guard-end";
 pub const MANUAL_MARKER: &str = "# layer-guard-manual";
+const GUARD_CHECK_COMMAND: &str = "layer guard --check";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallMode {
@@ -49,7 +51,7 @@ pub enum GuardIntent {
 pub enum ObservedHook {
     MissingLocal,
     MissingExternal,
-    Managed { preserved_exists: bool },
+    ContainsGuard { preserved_exists: bool },
     ForeignLocal,
     ForeignExternal,
 }
@@ -98,6 +100,18 @@ pub struct GuardInspection {
     pub intent: GuardIntent,
     pub observed: ObservedHook,
     pub health: GuardHealth,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuardStatusLine {
+    pub indicator: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuardStatusOutput {
+    pub exit_code: i32,
+    pub lines: Vec<GuardStatusLine>,
 }
 
 fn layer_bin() -> Result<PathBuf> {
@@ -244,8 +258,10 @@ pub fn inspect(ctx: &RepoContext) -> Result<GuardInspection> {
     let observed = match content.as_deref() {
         None if local => ObservedHook::MissingLocal,
         None => ObservedHook::MissingExternal,
-        Some(content) if content.contains(GUARD_START) || content.contains(MANUAL_MARKER) => {
-            ObservedHook::Managed { preserved_exists }
+        Some(content)
+            if content.contains(GUARD_START) || content.contains(GUARD_CHECK_COMMAND) =>
+        {
+            ObservedHook::ContainsGuard { preserved_exists }
         }
         Some(_) if local => ObservedHook::ForeignLocal,
         Some(_) => ObservedHook::ForeignExternal,
@@ -291,7 +307,7 @@ pub fn inspect(ctx: &RepoContext) -> Result<GuardInspection> {
                 }
             }
         }
-        Some(content) if content.contains(MANUAL_MARKER) => {
+        Some(content) if content.contains(GUARD_CHECK_COMMAND) => {
             GuardHealth::ActiveManual { local, framework }
         }
         Some(_) if local => match intent {
@@ -311,6 +327,20 @@ pub fn inspect(ctx: &RepoContext) -> Result<GuardInspection> {
         },
     };
 
+    // Lefthook compiles lefthook.yml into an opaque runner that doesn't contain
+    // "layer guard --check", so fall back to checking the config file directly.
+    let health = match health {
+        GuardHealth::NeedsManualExternal {
+            framework: HookFramework::Lefthook,
+        } if content.is_some() && lefthook_config_contains_guard(ctx) => {
+            GuardHealth::ActiveManual {
+                local,
+                framework: HookFramework::Lefthook,
+            }
+        }
+        other => other,
+    };
+
     Ok(GuardInspection {
         path,
         preserved_path: preserved,
@@ -320,6 +350,121 @@ pub fn inspect(ctx: &RepoContext) -> Result<GuardInspection> {
         observed,
         health,
     })
+}
+
+pub fn status_output(inspection: &GuardInspection) -> GuardStatusOutput {
+    match &inspection.health {
+        GuardHealth::ActiveDirect | GuardHealth::ActiveWrapper { .. } => {
+            let mut lines = vec![GuardStatusLine {
+                indicator: ui::ok(),
+                text: "Guard: pre-commit hook active".to_string(),
+            }];
+            if let GuardHealth::ActiveWrapper { preserved, .. } = &inspection.health {
+                lines.push(GuardStatusLine {
+                    indicator: ui::info(),
+                    text: format!(
+                        "Chaining existing pre-commit hook: {}",
+                        ui::dim_text(&preserved.display().to_string())
+                    ),
+                });
+            }
+            GuardStatusOutput {
+                exit_code: 0,
+                lines,
+            }
+        }
+        GuardHealth::ActiveManual { framework, .. } => GuardStatusOutput {
+            exit_code: 0,
+            lines: vec![GuardStatusLine {
+                indicator: ui::ok(),
+                text: match framework.label() {
+                    Some(label) => {
+                        format!("Guard: manual integration active via {}", ui::brand(label))
+                    }
+                    None => "Guard: manual integration active".to_string(),
+                },
+            }],
+        },
+        GuardHealth::Inactive => GuardStatusOutput {
+            exit_code: 2,
+            lines: vec![GuardStatusLine {
+                indicator: ui::exposed(),
+                text: format!(
+                    "Guard: not installed — run {} to block accidental commits",
+                    ui::brand("layer guard")
+                ),
+            }],
+        },
+        GuardHealth::NeedsRepairLocal { .. } => GuardStatusOutput {
+            exit_code: 1,
+            lines: vec![GuardStatusLine {
+                indicator: ui::exposed(),
+                text: format!(
+                    "Guard: replaced by another hook installer — run {} to restore it",
+                    ui::brand("layer guard --wrapper")
+                ),
+            }],
+        },
+        GuardHealth::NeedsInstallLocal { framework } => GuardStatusOutput {
+            exit_code: 1,
+            lines: vec![GuardStatusLine {
+                indicator: ui::exposed(),
+                text: match framework {
+                    HookFramework::PreCommit => format!(
+                        "Guard: not installed — run {} to wrap the existing Python pre-commit hook",
+                        ui::brand("layer guard")
+                    ),
+                    _ => format!(
+                        "Guard: not installed — run {} to set it up with the existing pre-commit hook",
+                        ui::brand("layer guard")
+                    ),
+                },
+            }],
+        },
+        GuardHealth::NeedsManualExternal { framework } => GuardStatusOutput {
+            exit_code: 1,
+            lines: vec![GuardStatusLine {
+                indicator: ui::exposed(),
+                text: match framework {
+                    HookFramework::Husky => format!(
+                        "Guard: not installed — run {} to add it to {}",
+                        ui::brand("layer guard --manual"),
+                        ui::brand(".husky/pre-commit")
+                    ),
+                    HookFramework::Lefthook => format!(
+                        "Guard: not installed — run {} to add it to {}",
+                        ui::brand("layer guard --manual"),
+                        ui::brand("lefthook.yml")
+                    ),
+                    _ => format!(
+                        "Guard: not installed — run {} for manual setup with the existing pre-commit hook",
+                        ui::brand("layer guard --manual")
+                    ),
+                },
+            }],
+        },
+        GuardHealth::Broken { local, reason, .. } => GuardStatusOutput {
+            exit_code: 1,
+            lines: vec![GuardStatusLine {
+                indicator: ui::exposed(),
+                text: match (local, reason) {
+                    (false, BrokenReason::MissingExpectedHook) => format!(
+                        "Guard: expected hook is managed outside .git — run {} to repair it",
+                        ui::brand("layer guard --manual")
+                    ),
+                    (_, BrokenReason::MissingExpectedHook) => format!(
+                        "Guard: expected hook is missing — run {} to restore it",
+                        ui::brand("layer guard")
+                    ),
+                    (_, BrokenReason::MissingPreservedHook) => format!(
+                        "Guard: preserved original hook is missing — run {} or {} to repair it",
+                        ui::brand("layer guard --remove"),
+                        ui::brand("layer guard --wrapper")
+                    ),
+                },
+            }],
+        },
+    }
 }
 
 fn framework_from_intent(intent: GuardIntent, fallback: HookFramework) -> HookFramework {
@@ -355,6 +500,17 @@ fn detect_framework(
     }
 
     HookFramework::Unknown
+}
+
+fn lefthook_config_contains_guard(ctx: &RepoContext) -> bool {
+    for name in &["lefthook.yml", "lefthook.yaml"] {
+        if let Ok(content) = fs::read_to_string(ctx.root.join(name)) {
+            if content.contains(GUARD_CHECK_COMMAND) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 pub fn install(ctx: &RepoContext, mode: InstallMode) -> Result<InstallResult> {
@@ -785,6 +941,130 @@ mod tests {
             inspect(&ctx).expect("inspection should succeed").health,
             GuardHealth::NeedsRepairLocal { .. }
         ));
+    }
+
+    #[test]
+    fn manual_detection_works_without_marker_comment() {
+        let (_tmp, ctx) = init_repo();
+        let hook = ctx.root.join(".git").join("hooks").join("pre-commit");
+        std::fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+
+        std::fs::write(
+            &hook,
+            "#!/bin/sh\nlayer guard --check || exit $?\necho 'other stuff'\n",
+        )
+        .expect("failed to write hook");
+
+        let inspection = inspect(&ctx).expect("inspection should succeed");
+        assert!(
+            matches!(inspection.health, GuardHealth::ActiveManual { .. }),
+            "expected ActiveManual, got {:?}",
+            inspection.health,
+        );
+    }
+
+    #[test]
+    fn lefthook_config_detection_finds_guard_in_config() {
+        let (_tmp, ctx) = init_repo();
+
+        Command::new("git")
+            .args(["config", "core.hooksPath", ".githooks"])
+            .current_dir(&ctx.root)
+            .output()
+            .expect("failed to set hooksPath");
+
+        std::fs::write(
+            ctx.root.join("lefthook.yml"),
+            "pre-commit:\n  commands:\n    layer-guard:\n      run: layer guard --check\n",
+        )
+        .expect("failed to write lefthook config");
+
+        let hook_dir = ctx.root.join(".githooks");
+        std::fs::create_dir_all(&hook_dir).expect("failed to create hook dir");
+        std::fs::write(
+            hook_dir.join("pre-commit"),
+            "#!/bin/sh\ncall_lefthook \"pre-commit\" \"$@\"\n",
+        )
+        .expect("failed to write lefthook runner");
+
+        let inspection = inspect(&ctx).expect("inspection should succeed");
+        assert!(
+            matches!(
+                inspection.health,
+                GuardHealth::ActiveManual {
+                    framework: HookFramework::Lefthook,
+                    ..
+                }
+            ),
+            "expected ActiveManual with Lefthook, got {:?}",
+            inspection.health,
+        );
+    }
+
+    #[test]
+    fn lefthook_config_with_guard_but_no_runner_stays_needs_manual() {
+        let (_tmp, ctx) = init_repo();
+
+        Command::new("git")
+            .args(["config", "core.hooksPath", ".githooks"])
+            .current_dir(&ctx.root)
+            .output()
+            .expect("failed to set hooksPath");
+
+        std::fs::write(
+            ctx.root.join("lefthook.yml"),
+            "pre-commit:\n  commands:\n    layer-guard:\n      run: layer guard --check\n",
+        )
+        .expect("failed to write lefthook config");
+
+        let inspection = inspect(&ctx).expect("inspection should succeed");
+        assert!(
+            matches!(
+                inspection.health,
+                GuardHealth::NeedsManualExternal {
+                    framework: HookFramework::Lefthook
+                }
+            ),
+            "expected NeedsManualExternal when runner is missing, got {:?}",
+            inspection.health,
+        );
+    }
+
+    #[test]
+    fn lefthook_without_guard_in_config_stays_needs_manual() {
+        let (_tmp, ctx) = init_repo();
+
+        Command::new("git")
+            .args(["config", "core.hooksPath", ".githooks"])
+            .current_dir(&ctx.root)
+            .output()
+            .expect("failed to set hooksPath");
+
+        std::fs::write(
+            ctx.root.join("lefthook.yml"),
+            "pre-commit:\n  commands:\n    lint:\n      run: eslint .\n",
+        )
+        .expect("failed to write lefthook config");
+
+        let hook_dir = ctx.root.join(".githooks");
+        std::fs::create_dir_all(&hook_dir).expect("failed to create hook dir");
+        std::fs::write(
+            hook_dir.join("pre-commit"),
+            "#!/bin/sh\ncall_lefthook \"pre-commit\" \"$@\"\n",
+        )
+        .expect("failed to write lefthook runner");
+
+        let inspection = inspect(&ctx).expect("inspection should succeed");
+        assert!(
+            matches!(
+                inspection.health,
+                GuardHealth::NeedsManualExternal {
+                    framework: HookFramework::Lefthook
+                }
+            ),
+            "expected NeedsManualExternal with Lefthook, got {:?}",
+            inspection.health,
+        );
     }
 
     #[test]

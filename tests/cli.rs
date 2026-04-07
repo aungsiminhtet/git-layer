@@ -366,6 +366,82 @@ fn guard_lefthook_manual_guidance_mentions_config() {
 }
 
 #[test]
+fn guard_lefthook_status_detects_manual_integration_in_config() {
+    let repo = init_repo();
+    Command::new("git")
+        .args(["config", "core.hooksPath", ".githooks"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    fs::write(
+        repo.path().join("lefthook.yml"),
+        "pre-commit:\n  commands:\n    layer-guard:\n      run: layer guard --check\n",
+    )
+    .expect("failed to write lefthook config");
+
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+    fs::write(&hook, "#!/bin/sh\ncall_lefthook \"pre-commit\" \"$@\"\n")
+        .expect("failed to write lefthook runner");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("manual integration active"))
+        .stdout(predicate::str::contains("Lefthook"));
+}
+
+#[test]
+fn guard_manual_detected_without_marker_comment() {
+    let repo = init_repo();
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+
+    fs::write(
+        &hook,
+        "#!/bin/sh\nlayer guard --check || exit $?\necho 'other stuff'\n",
+    )
+    .expect("failed to write hook");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("manual integration active"));
+}
+
+#[test]
+fn guard_husky_manual_detected_without_marker_comment() {
+    let repo = init_repo();
+    Command::new("git")
+        .args(["config", "core.hooksPath", ".husky"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let hook = pre_commit_hook_path(repo.path());
+    fs::create_dir_all(hook.parent().unwrap()).expect("failed to create hook dir");
+
+    fs::write(
+        &hook,
+        "#!/usr/bin/env sh\nlayer guard --check || exit $?\necho 'other husky stuff'\n",
+    )
+    .expect("failed to write hook");
+
+    Command::new(assert_cmd::cargo::cargo_bin!("layer"))
+        .current_dir(repo.path())
+        .args(["guard", "--status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("manual integration active"))
+        .stdout(predicate::str::contains("Husky"));
+}
+
+#[test]
 fn guard_wrapper_refuses_repo_managed_hook() {
     let repo = init_repo();
     Command::new("git")
